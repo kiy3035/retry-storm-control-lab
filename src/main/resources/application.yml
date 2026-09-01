@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: retry-storm-control-lab
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:retry_storm}
+    username: ${APP_DB_USER}
+    password: ${APP_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+  flyway:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:retry_storm}
+    user: ${POSTGRES_MIGRATION_USER}
+    password: ${POSTGRES_MIGRATION_PASSWORD}
+    placeholders:
+      app_db_user: ${APP_DB_USER}
+      app_db_password: ${APP_DB_PASSWORD}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_AMQP_PORT:5672}
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASSWORD}
+    connection-timeout: 3s
+
+management:
+  endpoint:
+    health:
+      show-components: always
+  endpoints:
+    web:
+      exposure:
+        include: health,info
