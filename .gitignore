@@ -2,7 +2,24 @@
 .gradle-user-home/
 .tmp/
 build/
+
+# 환경 변수와 로컬 전용 설정
 .env
+.env.*
+!.env.example
+src/main/resources/application-local.yml
+src/main/resources/application-local.yaml
+src/main/resources/application-local.properties
+
+# 인증서, 개인 키, 자격 증명
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+secrets/
+credentials/
+
 *.log
 .idea/
 *.iml
