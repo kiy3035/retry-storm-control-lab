@@ -68,6 +68,7 @@ class RetryStormControlLabApplicationTest {
         registry.add("spring.rabbitmq.username", () -> RABBIT_USER);
         registry.add("spring.rabbitmq.password", () -> RABBIT_PASSWORD);
         registry.add("lab.retry.max-attempts", () -> 3);
+        registry.add("lab.retry.mode", () -> "FIXED");
         registry.add("lab.retry.fixed-delay", () -> "75ms");
     }
 

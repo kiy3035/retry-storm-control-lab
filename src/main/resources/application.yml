@@ -34,7 +34,12 @@ lab:
     routing-key: retry.lab.work
   retry:
     max-attempts: ${LAB_RETRY_MAX_ATTEMPTS:3}
+    mode: ${LAB_RETRY_MODE:FIXED}
     fixed-delay: ${LAB_RETRY_FIXED_DELAY:200ms}
+    initial-delay: ${LAB_RETRY_INITIAL_DELAY:200ms}
+    multiplier: ${LAB_RETRY_MULTIPLIER:2.0}
+    max-delay: ${LAB_RETRY_MAX_DELAY:5s}
+    jitter-ratio: ${LAB_RETRY_JITTER_RATIO:0.5}
 
 management:
   endpoint:

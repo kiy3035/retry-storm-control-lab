@@ -25,6 +25,15 @@
 - 리스너 안에서 제한된 재시도를 완료하고 최종 실패를 `FAILED`로 기록한다. 브로커의 무한 재큐잉은 사용하지 않는다.
 - 합성 실패 횟수를 메시지에 넣어 즉시 성공, 재시도 후 성공, 예산 소진을 결정적으로 재현한다.
 
+## 2026-09-03: Exponential Backoff + Jitter
+
+- 기존 `FIXED`를 기본값으로 보존하고 `EXPONENTIAL_JITTER`를 설정으로 선택한다. 이후 비교 실험에서 같은 애플리케이션을 설정만 바꿔 실행할 수 있다.
+- 지수 기준 지연은 `initialDelay × multiplier^(retryIndex-1)`이며 `maxDelay`로 제한한다.
+- Jitter는 기준 지연의 `1 ± jitterRatio` 범위에서 적용하고 최종 지연도 `maxDelay`를 넘지 않는다.
+- 기본값은 initial 200ms, multiplier 2.0, max 5초, jitter ratio 0.5다. 따라서 첫 두 재시도 범위는 각각 100~300ms, 200~600ms다.
+- 난수원과 sleeper를 인터페이스로 주입한다. 운영에서는 `ThreadLocalRandom`과 실제 sleep, 테스트에서는 결정적 표본과 기록용 sleeper를 사용한다.
+- 동시 분산 테스트는 8개 작업 스레드에서 100개의 고유 표본을 동시에 실행하고, 실제 sleep 없이 100개의 서로 다른 첫 재시도 지연을 확인한다.
+
 ## 2026-09-01: 코드 주석과 단계별 검토 방식
 
 - 코드에 주석이 필요하면 반드시 한글로 작성한다.

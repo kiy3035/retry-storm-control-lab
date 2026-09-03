@@ -6,7 +6,7 @@
 
 ## 현재 단계
 
-- 현재 단계: 2단계 완료, 사용자 검토 대기
+- 현재 단계: 3단계 완료, 사용자 검토 대기
 - 상태: COMPLETED
 - 마지막 갱신: 2026-09-03 +09:00
 
@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | 1 | 프로젝트와 로컬 인프라 | COMPLETED |
 | 2 | 메시지 발행·소비와 Fixed 재시도 | COMPLETED |
-| 3 | Exponential Backoff + Jitter | NOT_STARTED |
+| 3 | Exponential Backoff + Jitter | COMPLETED |
 | 4 | JPA DLQ·재처리 API·낙관적 락 | NOT_STARTED |
 | 5 | Micrometer·Prometheus·k6 | NOT_STARTED |
 | 6 | 실제 비교 실험·보고서·블로그 | NOT_STARTED |
@@ -46,6 +46,12 @@
 - 처리 상태, 정확한 시도 횟수, 시도 시각을 메모리에서 추적
 - 최종 실패를 `FAILED`로 종료하고 RabbitMQ 무한 재큐잉 방지
 - 잘못 복사된 Text2SQL 루트 문서에 RabbitMQ 실험 우선 적용 정정문 추가
+- `FIXED`와 `EXPONENTIAL_JITTER` 정책을 환경 설정으로 선택
+- 첫 지연, 배수, 최대 지연, Jitter 비율을 검증된 설정값으로 분리
+- 지수 기준 지연과 대칭 Jitter, 최종 최대 지연 제한 구현
+- 운영용 `ThreadLocalRandom`과 실제 sleeper, 테스트용 난수원·기록 sleeper 분리
+- 지수 증가·Jitter 경계·정책 선택·잘못된 표본 거부 단위 테스트 구성
+- 8개 스레드에서 100개 동시 첫 재시도 지연이 100개 고유 값으로 분산됨을 실제 sleep 없이 검증
 
 ## 실제 실행한 테스트
 
@@ -56,6 +62,9 @@
 | 고유 Compose 프로젝트에서 `docker compose up -d --wait` 후 실행 JAR health 확인 | SUCCESS | PostgreSQL/RabbitMQ `healthy`, 애플리케이션과 `db`·`rabbit` 모두 `UP` |
 | `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 5/5 성공, 58초 | 1단계 검증 2건과 즉시 성공, 3회째 성공, 정확히 3회 후 실패 |
 | 동적 빈 포트의 고유 Compose 프로젝트에서 Boot JAR과 메시지 API 호출 | SUCCESS | health `UP`, 메시지 `SUCCEEDED`, 시도 3회, 간격 209ms·214ms |
+| `gradlew.bat --no-daemon test --tests dev.retrystorm.lab.retry.ExponentialJitterBackOffPolicyTest --rerun-tasks` | SUCCESS, 5/5 성공, 16초 | 지수 증가, 최대 지연, Jitter 경계, 정책 선택, 동시 분산 |
+| `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 10/10 성공, 34초 | Jitter 단위 테스트 5건과 기존 Testcontainers 통합 테스트 5건 |
+| `EXPONENTIAL_JITTER`로 동적 빈 포트 Compose와 Boot JAR 실행 | SUCCESS | health `UP`, 3회째 `SUCCEEDED`, 간격 272ms·533ms |
 
 테스트 개수와 성공·실패 개수를 실제 출력 기준으로 기록한다.
 
@@ -69,10 +78,13 @@
 | 애플리케이션 health | SUCCESS | `/actuator/health`: 전체 `UP`, `db=UP`, `rabbit=UP` |
 | RabbitMQ 연결 | SUCCESS | Actuator `rabbit=UP`, `rabbitmq-diagnostics -q ping`: `Ping succeeded` |
 | Fixed 재시도 실제 흐름 | SUCCESS | 합성 실패 2회 뒤 3회째 성공, 측정 간격 209ms·214ms |
+| Exponential Jitter 실제 흐름 | SUCCESS | 첫·두 번째 지수 기준 범위에서 272ms·533ms 뒤 재시도, 3회째 성공 |
 
 검증용 Compose 프로젝트 `retry-storm-control-lab-stage1-check`의 컨테이너, 네트워크, 볼륨은 확인 후 제거했다. 사용자의 기존 Docker 리소스는 변경하지 않았다.
 
 2단계 검증용 Compose 프로젝트 `retry-storm-stage2-check`도 검증 후 컨테이너, 네트워크, 볼륨을 제거했다. 실행 비밀번호는 매번 임의 생성해 프로세스 환경 변수에만 주입했고 파일에 저장하지 않았다.
+
+3단계 검증용 `retry-storm-stage3-check`도 같은 방식으로 실행 후 컨테이너, 네트워크, 볼륨을 제거했다.
 
 검증 환경:
 
@@ -96,14 +108,17 @@
 - durable queue 소비와 제한된 Fixed 재시도
 - 성공·최종 실패 상태, 정확한 시도 횟수와 시각 조회
 - 최대 시도 횟수와 Fixed delay 환경 변수 설정
+- Fixed와 Exponential Jitter 정책 선택
+- 지수 기준 지연, Jitter 비율, 최대 지연 환경 변수 설정
+- 주입 가능한 난수원과 sleeper를 이용한 결정적 정책 테스트
 
 ## 미완료 작업
 
-- 3단계 전체
 - 4단계 전체
 - 5단계 전체
 - 6단계 전체
 - 프로세스 재시작 뒤 처리 상태 보존과 최종 실패 DLQ 저장은 4단계 범위
+- 실제 다건 부하에서 Fixed와 Jitter를 비교하는 수치 측정은 5·6단계 범위
 
 ## 발생한 오류와 확인된 원인
 
@@ -142,6 +157,13 @@
   - 확인한 원인: 기존 사용자 지침을 통째로 삭제해 이력을 잃을 위험
   - 수정 내용: 기존 본문을 보존하고 맨 위에 현재 RabbitMQ 실험의 우선 적용 정정문을 추가
   - 수정 후 검증: 세 문서에 현재 범위와 보관 범위가 명시됨
+- 증상: 첫 3단계 전체 테스트에서 동시 Jitter 분산 테스트가 100개 중 고유 지연 72개로 임계값 75개를 넘지 못함
+  - 확인한 원인: 100~300ms의 정수 구간에서 무작위 표본의 중복을 고려하지 않은 과도한 임계값
+  - 첫 수정: 고유 지연 기준을 70개 이상으로 조정하고 양쪽 범위 도달을 추가 검증
+- 증상: 다음 실행에서 같은 seed인데 고유 지연이 69개로 바뀌어 다시 실패
+  - 확인한 원인: 여러 스레드가 공유한 `Random.nextDouble()`의 내부 난수 추출 조합 순서가 달라져 seed만으로 동시 실행 결과가 결정적이지 않았음
+  - 최종 수정: 각 작업에 실행 순서와 무관한 고유 0~1 표본을 주입
+  - 수정 후 검증: 100개 지연 모두 100~300ms 범위의 서로 다른 값, 단위 테스트 5/5와 전체 10/10 성공
 
 ## PENDING 항목
 
@@ -154,9 +176,9 @@
 
 ## 다음 대화에서 시작할 작업
 
-1. 사용자가 2단계 PR을 검토하고 merge
-2. 사용자가 `계속 진행해`라고 요청한 경우에만 3단계 시작
-3. Exponential Backoff + Jitter 정책과 Fixed/Jitter 설정 선택, 동시 실패 분산 테스트 구현
+1. 사용자가 3단계 PR을 검토하고 merge
+2. 사용자가 `계속 진행해`라고 요청한 경우에만 4단계 시작
+3. PostgreSQL JPA DLQ, 중복 저장 방지, 재처리 API, 낙관적 락 구현
 
 ## 실행 및 재현 명령
 
@@ -174,7 +196,42 @@ Invoke-RestMethod ("http://localhost:8080/api/v1/messages/" + $published.message
 docker compose down
 ```
 
-## 2단계 완료 사용자 보고용 요약
+3단계 정책을 실행하려면 애플리케이션 시작 전에 다음 값을 설정한다.
+
+```powershell
+$env:LAB_RETRY_MODE = 'EXPONENTIAL_JITTER'
+$env:LAB_RETRY_INITIAL_DELAY = '200ms'
+$env:LAB_RETRY_MULTIPLIER = '2.0'
+$env:LAB_RETRY_MAX_DELAY = '5s'
+$env:LAB_RETRY_JITTER_RATIO = '0.5'
+```
+
+## 3단계 완료 사용자 보고용 요약
+
+```text
+3단계를 구현하고 검증했습니다.
+
+완료한 작업:
+- 선택 가능한 Fixed와 Exponential Jitter 정책
+- 지수 증가, Jitter, 최대 지연과 주입 가능한 난수원·sleeper
+- 100개 동시 재시도 지연의 결정적 분산 검증
+
+검증 결과:
+- Jitter 단위 테스트: 5/5 성공
+- 전체 테스트: 10/10 성공, 실패 0, 오류 0
+- 실제 Jitter 모드: 3회째 성공, 간격 272ms·533ms
+
+현재 상태:
+- 3단계 COMPLETED, 사용자 PR 검토 대기
+
+남은 한계:
+- 상태는 메모리 기반이며 실제 다건 부하 비교는 아직 미실행
+
+다음 단계:
+- 사용자 확인과 계속 진행 요청 후 4단계 JPA DLQ·재처리·낙관적 락 시작
+```
+
+## 2단계 완료 당시 사용자 보고용 요약
 
 ```text
 2단계를 구현하고 검증했습니다.
@@ -217,6 +274,11 @@ docker compose down
 - `src/main/java/dev/retrystorm/lab/message/*`: 메시지 발행·소비·합성 실패·상태 추적
 - `src/main/java/dev/retrystorm/lab/api/*`: 메시지 발행과 상태 조회 API
 - `docs/pr-stage-2.md`: 2단계 PR 본문
+- `src/main/java/dev/retrystorm/lab/config/RetryMode.java`: 정책 선택 값
+- `src/main/java/dev/retrystorm/lab/config/RetryProperties.java`: Fixed/Jitter 설정과 검증
+- `src/main/java/dev/retrystorm/lab/retry/*`: Jitter 난수원, 지수 Jitter 정책, 정책 팩토리
+- `src/test/java/dev/retrystorm/lab/retry/ExponentialJitterBackOffPolicyTest.java`: 정책·동시 분산 단위 테스트
+- `docs/pr-stage-3.md`: 3단계 PR 본문
 
 ## 1단계 완료 당시 사용자 보고용 요약
 
