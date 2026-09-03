@@ -1,4 +1,12 @@
-# Codex 실행 프롬프트
+# 현재 저장소용 Codex 실행 지침
+
+이 저장소에서는 RabbitMQ 재시도 폭풍 제어 실험만 구현한다. 아래 Text2SQL 프롬프트는 잘못 복사된 보관 자료이며 실행 지침으로 적용하지 않는다.
+
+작업 전 `AGENTS.md`, `PROJECT_SPEC.md`, `PROGRESS.md`를 읽고, `PROGRESS.md`에서 사용자가 승인한 현재 단계 하나만 구현한다. 무료 로컬 PostgreSQL·RabbitMQ·Testcontainers를 사용하고 유료 API·SaaS·체험·결제수단 등록·유료 fallback을 금지한다. 비밀값은 환경 변수로만 주입하고 코드 주석은 한글로 작성한다.
+
+단계 완료 후 전체 테스트와 실제 Compose/JAR 대표 흐름을 검증하고 `PROGRESS.md`에 실제 결과와 오류를 기록한다. 독립 브랜치에 커밋·푸시하고 작업 내용, 변경 전후, 검증 결과, 다음 단계를 담은 GitHub PR을 만든 뒤 OPEN 상태·head 브랜치·커밋·파일을 확인한다. 사용자 승인 전에는 다음 단계를 시작하지 않는다.
+
+# 보관 문서: Codex 실행 프롬프트
 
 아래 내용을 새 저장소의 Codex에 그대로 전달한다. 이 파일과 같은 디렉터리의 `AGENTS.md`, `PROJECT_SPEC.md`도 저장소 루트에 둔다.
 

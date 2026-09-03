@@ -5,17 +5,23 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 
 import javax.sql.DataSource;
 
+import dev.retrystorm.lab.api.PublishMessageRequest;
+import dev.retrystorm.lab.api.PublishMessageResponse;
+import dev.retrystorm.lab.message.ProcessingSnapshot;
+import dev.retrystorm.lab.message.ProcessingState;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -61,6 +67,8 @@ class RetryStormControlLabApplicationTest {
         registry.add("spring.rabbitmq.port", RABBITMQ::getAmqpPort);
         registry.add("spring.rabbitmq.username", () -> RABBIT_USER);
         registry.add("spring.rabbitmq.password", () -> RABBIT_PASSWORD);
+        registry.add("lab.retry.max-attempts", () -> 3);
+        registry.add("lab.retry.fixed-delay", () -> "75ms");
     }
 
     @Autowired
@@ -109,6 +117,72 @@ class RetryStormControlLabApplicationTest {
 
         assertThat(health).containsEntry("status", "UP");
         assertThat(health).containsKey("components");
+    }
+
+    @Test
+    void messageSucceedsOnFirstAttempt() throws Exception {
+        var published = publish("즉시 성공", 0);
+        var completed = awaitTerminalState(published.messageId());
+
+        assertThat(completed.state()).isEqualTo(ProcessingState.SUCCEEDED);
+        assertThat(completed.attemptCount()).isEqualTo(1);
+        assertThat(completed.attemptTimestamps()).hasSize(1);
+    }
+
+    @Test
+    void messageSucceedsOnThirdAttemptWithFixedDelay() throws Exception {
+        var published = publish("두 번 실패 후 성공", 2);
+        var completed = awaitTerminalState(published.messageId());
+
+        assertThat(completed.state()).isEqualTo(ProcessingState.SUCCEEDED);
+        assertThat(completed.attemptCount()).isEqualTo(3);
+        assertThat(completed.attemptTimestamps()).hasSize(3);
+
+        for (int index = 1; index < completed.attemptTimestamps().size(); index++) {
+            var interval = Duration.between(
+                    completed.attemptTimestamps().get(index - 1),
+                    completed.attemptTimestamps().get(index));
+            assertThat(interval).isGreaterThanOrEqualTo(Duration.ofMillis(60));
+        }
+    }
+
+    @Test
+    void messageFailsAfterExactlyThreeAttempts() throws Exception {
+        var published = publish("계속 실패", 3);
+        var completed = awaitTerminalState(published.messageId());
+
+        assertThat(completed.state()).isEqualTo(ProcessingState.FAILED);
+        assertThat(completed.attemptCount()).isEqualTo(3);
+        assertThat(completed.attemptTimestamps()).hasSize(3);
+    }
+
+    private PublishMessageResponse publish(String payload, int failuresBeforeSuccess) {
+        var response = restTemplate.postForEntity(
+                "http://localhost:" + port + "/api/v1/messages",
+                new PublishMessageRequest(payload, failuresBeforeSuccess),
+                PublishMessageResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        assertThat(response.getBody()).isNotNull();
+        return response.getBody();
+    }
+
+    private ProcessingSnapshot awaitTerminalState(UUID messageId) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (System.nanoTime() < deadline) {
+            var response = restTemplate.getForEntity(
+                    "http://localhost:" + port + "/api/v1/messages/" + messageId,
+                    ProcessingSnapshot.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                var snapshot = response.getBody();
+                if (snapshot.state() == ProcessingState.SUCCEEDED
+                        || snapshot.state() == ProcessingState.FAILED) {
+                    return snapshot;
+                }
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("메시지가 제한 시간 안에 종료 상태에 도달하지 못했습니다.");
     }
 
     private static void executeAsRuntimeUser(String sql) throws SQLException {

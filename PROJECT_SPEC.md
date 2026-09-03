@@ -1,4 +1,20 @@
-# Text2SQL 안전 실행 실험 명세
+# 현재 적용 명세: RabbitMQ 재시도 폭풍 제어
+
+아래 Text2SQL 명세는 다른 프로젝트에서 잘못 복사된 보관 내용이며 이 저장소의 구현 요구사항으로 적용하지 않는다. 현재 명세는 다음과 같다.
+
+## 목표와 흐름
+
+`POST /api/v1/messages`가 합성 메시지를 durable RabbitMQ exchange와 queue로 발행한다. 소비자는 제한된 재시도를 수행하며 `GET /api/v1/messages/{messageId}`로 `PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED` 상태와 시도 횟수·시각을 확인한다.
+
+- 2단계: 최초 포함 최대 3회, Fixed delay 기본 200ms, 즉시 성공·3회째 성공·예산 소진 검증
+- 3단계: Exponential Backoff + Jitter, 제어 가능한 난수·대기 정책, 동시 실패의 재시도 분산 검증
+- 4단계: PostgreSQL JPA DLQ, 중복 저장 방지, 재처리 API, 낙관적 락
+- 5단계: Micrometer·Prometheus, queue depth와 처리·재시도·DLQ 지표, 무료 로컬 부하 도구
+- 6단계: 동일 입력의 Fixed/Jitter 반복 비교, 원본 JSON/CSV, 환경과 중앙값·p95·최소·최대, 한국어 블로그
+
+2·3단계 상태 추적은 프로세스 메모리이며 재시작 내구성은 4단계 DLQ에서 구현한다. 합성 데이터만 사용하고 메시지 본문과 자격 증명을 로그나 결과에 남기지 않는다. PostgreSQL migration/runtime 계정을 분리하고 runtime DDL을 허용하지 않는다. 외부 유료 서비스와 결제수단이 필요한 도구는 사용하지 않는다.
+
+# 보관 문서: Text2SQL 안전 실행 실험 명세
 
 ## 1. 구현 목표
 

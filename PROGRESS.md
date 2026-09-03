@@ -6,16 +6,16 @@
 
 ## 현재 단계
 
-- 현재 단계: 1단계 완료, 사용자 검토 대기
+- 현재 단계: 2단계 완료, 사용자 검토 대기
 - 상태: COMPLETED
-- 마지막 갱신: 2026-09-01 21:00:15 +09:00
+- 마지막 갱신: 2026-09-03 +09:00
 
 ## 단계 현황
 
 | 단계 | 내용 | 상태 |
 | --- | --- | --- |
 | 1 | 프로젝트와 로컬 인프라 | COMPLETED |
-| 2 | 메시지 발행·소비와 Fixed 재시도 | NOT_STARTED |
+| 2 | 메시지 발행·소비와 Fixed 재시도 | COMPLETED |
 | 3 | Exponential Backoff + Jitter | NOT_STARTED |
 | 4 | JPA DLQ·재처리 API·낙관적 락 | NOT_STARTED |
 | 5 | Micrometer·Prometheus·k6 | NOT_STARTED |
@@ -39,6 +39,13 @@
 - Actuator health endpoint와 DB/RabbitMQ health component 구성
 - 값이 비어 있는 `.env.example`, PowerShell 로컬 실행 절차, 결정 기록 구성
 - 1단계 변경 전후와 검증 결과 중심의 `docs/pr-stage-1.md` 작성
+- durable DirectExchange·Queue·Binding과 Jackson JSON 메시지 변환 구성
+- `POST /api/v1/messages` 발행 API와 `GET /api/v1/messages/{messageId}` 상태 조회 API 구성
+- 합성 실패 횟수로 즉시 성공, 재시도 후 성공, 예산 소진을 결정적으로 재현
+- 최초 포함 최대 3회와 기본 Fixed delay 200ms를 환경 변수로 설정
+- 처리 상태, 정확한 시도 횟수, 시도 시각을 메모리에서 추적
+- 최종 실패를 `FAILED`로 종료하고 RabbitMQ 무한 재큐잉 방지
+- 잘못 복사된 Text2SQL 루트 문서에 RabbitMQ 실험 우선 적용 정정문 추가
 
 ## 실제 실행한 테스트
 
@@ -47,6 +54,8 @@
 | `gradlew.bat --no-daemon clean test` | SUCCESS, 2/2 성공, 최종 실행 1분 5초 | Flyway baseline, runtime 계정 사용, runtime DDL 거부, RabbitMQ 연결, HTTP health |
 | `gradlew.bat --no-daemon bootJar` | SUCCESS | 실행 가능한 Spring Boot JAR 생성 |
 | 고유 Compose 프로젝트에서 `docker compose up -d --wait` 후 실행 JAR health 확인 | SUCCESS | PostgreSQL/RabbitMQ `healthy`, 애플리케이션과 `db`·`rabbit` 모두 `UP` |
+| `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 5/5 성공, 58초 | 1단계 검증 2건과 즉시 성공, 3회째 성공, 정확히 3회 후 실패 |
+| 동적 빈 포트의 고유 Compose 프로젝트에서 Boot JAR과 메시지 API 호출 | SUCCESS | health `UP`, 메시지 `SUCCEEDED`, 시도 3회, 간격 209ms·214ms |
 
 테스트 개수와 성공·실패 개수를 실제 출력 기준으로 기록한다.
 
@@ -59,8 +68,11 @@
 | Flyway migration | SUCCESS | `1|create lab schema|true`, `2|create runtime role|true` |
 | 애플리케이션 health | SUCCESS | `/actuator/health`: 전체 `UP`, `db=UP`, `rabbit=UP` |
 | RabbitMQ 연결 | SUCCESS | Actuator `rabbit=UP`, `rabbitmq-diagnostics -q ping`: `Ping succeeded` |
+| Fixed 재시도 실제 흐름 | SUCCESS | 합성 실패 2회 뒤 3회째 성공, 측정 간격 209ms·214ms |
 
 검증용 Compose 프로젝트 `retry-storm-control-lab-stage1-check`의 컨테이너, 네트워크, 볼륨은 확인 후 제거했다. 사용자의 기존 Docker 리소스는 변경하지 않았다.
+
+2단계 검증용 Compose 프로젝트 `retry-storm-stage2-check`도 검증 후 컨테이너, 네트워크, 볼륨을 제거했다. 실행 비밀번호는 매번 임의 생성해 프로세스 환경 변수에만 주입했고 파일에 저장하지 않았다.
 
 검증 환경:
 
@@ -80,15 +92,18 @@
 - 제한된 runtime DB 계정으로 애플리케이션 datasource 연결
 - Actuator를 통한 PostgreSQL·RabbitMQ 연결 상태 확인
 - Testcontainers를 통한 동일 기반의 자동 통합 검증
+- HTTP API를 통한 합성 메시지 RabbitMQ 비동기 발행
+- durable queue 소비와 제한된 Fixed 재시도
+- 성공·최종 실패 상태, 정확한 시도 횟수와 시각 조회
+- 최대 시도 횟수와 Fixed delay 환경 변수 설정
 
 ## 미완료 작업
 
-- Text2SQL 내용의 `AGENTS.md`·`PROJECT_SPEC.md`·`CODEX_PROMPT.md`와 RabbitMQ 재시도 내용의 저장소·`PROGRESS.md` 간 명세 정합성 확정
-- 2단계 전체
 - 3단계 전체
 - 4단계 전체
 - 5단계 전체
 - 6단계 전체
+- 프로세스 재시작 뒤 처리 상태 보존과 최종 실패 DLQ 저장은 4단계 범위
 
 ## 발생한 오류와 확인된 원인
 
@@ -115,6 +130,18 @@
   - 확인한 원인: Compose/README의 `POSTGRES_PORT`·`POSTGRES_DB`와 애플리케이션의 `DB_PORT`·`DB_NAME` 불일치
   - 수정 내용: 애플리케이션도 `POSTGRES_HOST`·`POSTGRES_PORT`·`POSTGRES_DB`를 사용하도록 통일
   - 수정 후 검증: 실행 JAR health 전체 `UP`, Flyway V1/V2 성공
+- 증상: 2단계 첫 실제 기동 명령이 `.gradlew.bat`를 찾지 못해 애플리케이션 실행 전에 중단
+  - 확인한 원인: 명령 전달 과정에서 Windows 상대 경로의 역슬래시가 제거됨
+  - 수정 내용: `./gradlew.bat`와 슬래시 경로로 변경
+  - 수정 후 검증: `bootJar` 성공
+- 증상: 고정 포트 `55433`으로 2단계 Compose PostgreSQL 시작 실패
+  - 확인한 원인: 다른 로컬 작업이 해당 포트를 사용 중
+  - 수정 내용: 기존 프로세스를 종료하지 않고 OS가 배정한 빈 포트 4개를 DB·RabbitMQ·관리 UI·애플리케이션에 사용
+  - 수정 후 검증: 두 컨테이너 `healthy`, 실행 JAR health `UP`, 메시지 3회째 성공
+- 증상: 루트 지시 문서 3개의 전체 교체가 안전 검토에서 거부됨
+  - 확인한 원인: 기존 사용자 지침을 통째로 삭제해 이력을 잃을 위험
+  - 수정 내용: 기존 본문을 보존하고 맨 위에 현재 RabbitMQ 실험의 우선 적용 정정문을 추가
+  - 수정 후 검증: 세 문서에 현재 범위와 보관 범위가 명시됨
 
 ## PENDING 항목
 
@@ -127,9 +154,9 @@
 
 ## 다음 대화에서 시작할 작업
 
-1. 사용자가 1단계 PR을 검토하고 merge
-2. Text2SQL 명세와 RabbitMQ 재시도 단계표 중 이 저장소에서 유지할 기준 확정
-3. 사용자가 `계속 진행해`라고 요청한 경우에만 2단계 메시지 발행·소비와 Fixed 재시도 시작
+1. 사용자가 2단계 PR을 검토하고 merge
+2. 사용자가 `계속 진행해`라고 요청한 경우에만 3단계 시작
+3. Exponential Backoff + Jitter 정책과 Fixed/Jitter 설정 선택, 동시 실패 분산 테스트 구현
 
 ## 실행 및 재현 명령
 
@@ -141,7 +168,35 @@
 docker compose up -d --wait
 java -jar build\libs\retry-storm-control-lab-0.0.1-SNAPSHOT.jar
 Invoke-RestMethod http://localhost:8080/actuator/health
+$body = @{ payload = '합성 메시지'; failuresBeforeSuccess = 2 } | ConvertTo-Json
+$published = Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/v1/messages -ContentType 'application/json' -Body $body
+Invoke-RestMethod ("http://localhost:8080/api/v1/messages/" + $published.messageId)
 docker compose down
+```
+
+## 2단계 완료 사용자 보고용 요약
+
+```text
+2단계를 구현하고 검증했습니다.
+
+완료한 작업:
+- RabbitMQ durable topology, 메시지 발행·소비 API, 최대 3회 Fixed 재시도
+- 합성 실패 기반의 성공·최종 실패 재현과 상태·시도 시각 조회
+- RabbitMQ 프로젝트 범위 정정과 README 재현 절차
+
+검증 결과:
+- 전체 테스트: 5/5 성공, 실패 0, 오류 0
+- 실제 인프라: PostgreSQL·RabbitMQ healthy, 애플리케이션 health UP
+- 실제 메시지: 두 번 실패 후 3회째 성공, 간격 209ms·214ms
+
+현재 상태:
+- 2단계 COMPLETED, 사용자 PR 검토 대기
+
+남은 한계:
+- 상태는 메모리 기반이며 Jitter와 DB DLQ는 아직 미구현
+
+다음 단계:
+- 사용자 확인과 계속 진행 요청 후 3단계 Exponential Backoff + Jitter 시작
 ```
 
 ## 변경한 주요 파일
@@ -158,8 +213,12 @@ docker compose down
 - `docs/decisions.md`: 선택 근거, 명세 불일치, 한글 주석·단계별 PR 규칙
 - `docs/pr-stage-1.md`: 1단계 PR 본문 초안
 - `PROGRESS.md`: 실제 결과와 다음 시작점
+- `src/main/java/dev/retrystorm/lab/config/*`: RabbitMQ topology와 Fixed 재시도 설정
+- `src/main/java/dev/retrystorm/lab/message/*`: 메시지 발행·소비·합성 실패·상태 추적
+- `src/main/java/dev/retrystorm/lab/api/*`: 메시지 발행과 상태 조회 API
+- `docs/pr-stage-2.md`: 2단계 PR 본문
 
-## 단계 완료 시 사용자 보고용 요약
+## 1단계 완료 당시 사용자 보고용 요약
 
 ```text
 1단계를 구현하고 검증했습니다.
