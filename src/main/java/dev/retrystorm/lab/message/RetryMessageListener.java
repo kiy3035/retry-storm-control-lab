@@ -9,20 +9,20 @@ public class RetryMessageListener {
 
     private final SyntheticMessageProcessor processor;
     private final MessageProcessingTracker tracker;
-    private final RetryTemplate fixedRetryTemplate;
+    private final RetryTemplate retryTemplate;
 
     public RetryMessageListener(
             SyntheticMessageProcessor processor,
             MessageProcessingTracker tracker,
-            RetryTemplate fixedRetryTemplate) {
+            RetryTemplate retryTemplate) {
         this.processor = processor;
         this.tracker = tracker;
-        this.fixedRetryTemplate = fixedRetryTemplate;
+        this.retryTemplate = retryTemplate;
     }
 
     @RabbitListener(queues = "${lab.messaging.work-queue}")
     public void consume(RetryMessage message) {
-        fixedRetryTemplate.execute(
+        retryTemplate.execute(
                 context -> {
                     processor.process(message);
                     return null;

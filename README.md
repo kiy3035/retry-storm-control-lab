@@ -1,6 +1,6 @@
 # retry-storm-control-lab
 
-RabbitMQ 재시도 전략을 로컬에서 재현하고 비교하기 위한 개인 실험 프로젝트다. 현재 2단계까지 완료되어 메시지 발행·소비와 최대 3회의 Fixed 재시도를 실행할 수 있다.
+RabbitMQ 재시도 전략을 로컬에서 재현하고 비교하기 위한 개인 실험 프로젝트다. 현재 3단계까지 완료되어 Fixed와 Exponential Backoff + Jitter를 설정으로 선택할 수 있다.
 
 ## 비용과 비밀정보 원칙
 
@@ -32,7 +32,12 @@ $env:RABBITMQ_AMQP_PORT = '5672'
 $env:RABBITMQ_MANAGEMENT_PORT = '15672'
 $env:SERVER_PORT = '8080'
 $env:LAB_RETRY_MAX_ATTEMPTS = '3'
+$env:LAB_RETRY_MODE = 'EXPONENTIAL_JITTER'
 $env:LAB_RETRY_FIXED_DELAY = '200ms'
+$env:LAB_RETRY_INITIAL_DELAY = '200ms'
+$env:LAB_RETRY_MULTIPLIER = '2.0'
+$env:LAB_RETRY_MAX_DELAY = '5s'
+$env:LAB_RETRY_JITTER_RATIO = '0.5'
 
 docker compose up -d --wait
 .\gradlew.bat bootRun
@@ -66,6 +71,14 @@ Invoke-RestMethod ("http://localhost:8080/api/v1/messages/" + $published.message
 
 처리는 비동기이므로 첫 조회에서 `PENDING` 또는 `PROCESSING`이 보일 수 있다. 종료 후 `SUCCEEDED` 또는 `FAILED`와 `attemptCount`, `attemptTimestamps`를 확인한다.
 
+## 재시도 정책 선택
+
+`LAB_RETRY_MODE`는 `FIXED` 또는 `EXPONENTIAL_JITTER`를 받는다. 기본값은 2단계 기준을 보존하기 위해 `FIXED`다.
+
+Exponential Jitter는 재시도 번호 n에 대해 기준 지연을 `min(initialDelay × multiplier^(n-1), maxDelay)`로 계산하고, 여기에 `1 ± jitterRatio` 범위의 난수를 적용한다. 최종 지연은 `maxDelay`를 넘지 않는다. 기본값이면 첫 재시도는 100~300ms, 두 번째 재시도는 200~600ms 범위다.
+
+테스트에서는 난수원과 sleeper를 주입해 실제 대기 없이 경계와 분산을 검증한다. 운영 실행에서는 스레드 로컬 난수와 실제 sleep을 사용한다.
+
 RabbitMQ 관리 UI는 `http://localhost:15672`에서 확인할 수 있다. 계정은 현재 셸에 설정한 `RABBITMQ_USER`와 `RABBITMQ_PASSWORD`다.
 
 종료할 때 같은 환경 변수 세션에서 다음을 실행한다.
@@ -84,8 +97,8 @@ docker compose down
 .\gradlew.bat test
 ```
 
-테스트는 Flyway baseline, runtime DB 계정과 DDL 거부, RabbitMQ 연결, 애플리케이션 health, 즉시 성공, Fixed 재시도 후 성공, 3회 예산 소진을 확인한다.
+테스트는 Flyway baseline, runtime DB 계정과 DDL 거부, RabbitMQ 연결, 애플리케이션 health, Fixed 재시도, 지수 증가, Jitter 경계, 정책 선택, 100개 동시 재시도 지연 분산을 확인한다.
 
 ## 현재 범위
 
-메시지 발행·소비와 Fixed 재시도는 구현했다. 처리 상태는 현재 메모리에 있으므로 애플리케이션 재시작 시 보존되지 않는다. Exponential Backoff + Jitter, PostgreSQL DLQ, 관측성, 부하 측정은 아직 구현하지 않았으며 `PROGRESS.md`의 단계 순서에 따라 진행한다.
+메시지 발행·소비, Fixed, Exponential Backoff + Jitter까지 구현했다. 처리 상태는 현재 메모리에 있으므로 애플리케이션 재시작 시 보존되지 않는다. PostgreSQL DLQ, 관측성, 실제 부하 비교는 아직 구현하지 않았으며 `PROGRESS.md`의 단계 순서에 따라 진행한다.
