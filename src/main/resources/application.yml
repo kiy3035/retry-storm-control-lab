@@ -20,6 +20,21 @@ spring:
     username: ${RABBITMQ_USER}
     password: ${RABBITMQ_PASSWORD}
     connection-timeout: 3s
+    listener:
+      simple:
+        acknowledge-mode: auto
+        default-requeue-rejected: false
+        concurrency: 1
+        max-concurrency: 1
+
+lab:
+  messaging:
+    exchange: retry.lab.exchange
+    work-queue: retry.lab.work
+    routing-key: retry.lab.work
+  retry:
+    max-attempts: ${LAB_RETRY_MAX_ATTEMPTS:3}
+    fixed-delay: ${LAB_RETRY_FIXED_DELAY:200ms}
 
 management:
   endpoint:
