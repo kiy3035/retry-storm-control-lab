@@ -1,5 +1,16 @@
 # 결정 기록
 
+## 2026-09-04: 5단계 관측성과 로컬 부하 도구
+
+- Micrometer Prometheus registry만 추가하며 버전은 기존 Spring Boot 의존성 관리에 맡긴다. 유료 모니터링 adapter나 cloud 출력은 구성하지 않는다.
+- 처리/재시도는 CONSUME와 REPLAY를 분리하고 enum 기반 태그만 사용한다. DLQ INSERTED/DUPLICATE는 afterCommit에서 집계해 롤백을 성공으로 세지 않는다.
+- 처리 시간은 monotonic clock, 발행부터 종료까지 지연은 메시지의 Instant를 사용한다. 후자는 로컬 벽시계와 polling 오차를 구분해 문서화한다.
+- RabbitMQ 자체 Prometheus plugin을 monitoring Compose override에서만 활성화한다. 큐 2개인 로컬 실험이라 per-object endpoint를 사용하고 metrics 포트는 호스트에 공개하지 않는다.
+- Prometheus v3.5.0, k6 1.2.3을 재현용 태그로 고정한다. 최신 버전이라는 의미가 아니며 이 조합의 실제 로컬 실행을 검증한다. Prometheus 데이터는 24시간·256MB 한도로 보존한다.
+- k6는 전역 iteration 번호로 0~3 합성 실패 조건을 결정하고 최종 상태까지 기다리는 제한된 closed-loop 도구다. 최대 건수·VU·시간을 제한하고 로컬 URL만 허용하며 redirect와 사용량 보고를 끈다.
+- 5초 scrape의 rate를 1초 실측 재시도 bucket으로 해석하지 않는다. 실제 전략 비교·원시 이벤트 분석은 6단계에 남긴다.
+- 4단계 PR #5가 아직 OPEN이므로 5단계는 feat/stage-4-jpa-dlq를 base로 하는 별도 stacked PR로 제출한다. 사용자가 4단계를 merge한 뒤 5단계 base를 main으로 변경해야 한다.
+
 ## 2026-09-04: JPA DLQ와 재처리 경계
 
 - 최종 실패를 Flyway V3의 `retry_lab.dead_letters`에 저장하고 DB 커밋 성공 후 소비를 완료한다. JPA는 `ddl-auto=validate`로 스키마를 확인하며 DDL은 기존 migration 계정만 실행한다.

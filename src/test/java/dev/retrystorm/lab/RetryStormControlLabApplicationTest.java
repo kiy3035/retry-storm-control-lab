@@ -59,6 +59,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers
+@org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class RetryStormControlLabApplicationTest {
 
@@ -132,6 +133,67 @@ class RetryStormControlLabApplicationTest {
     @Autowired
     RetryMessageListener messageListener;
 
+    @Autowired
+    io.micrometer.core.instrument.MeterRegistry meterRegistry;
+
+    @Test
+    void metricsCountConsumeRetriesAndReplaySeparately() {
+        double attempts = metricCount("lab.processing.attempts", "path", "CONSUME");
+        double retries = metricCount("lab.retries", "path", "CONSUME");
+        double replayAttempts = metricCount("lab.processing.attempts", "path", "REPLAY");
+        long completed = meterRegistry.get("lab.processing.duration")
+                .tags("path", "CONSUME", "outcome", "SUCCEEDED").timer().count();
+        var success = new RetryMessage(UUID.randomUUID(), "지표 비노출 합성 본문", 2, Instant.now());
+        messageListener.consume(success);
+        assertThat(metricCount("lab.processing.attempts", "path", "CONSUME") - attempts).isEqualTo(3);
+        assertThat(metricCount("lab.retries", "path", "CONSUME") - retries).isEqualTo(2);
+        assertThat(meterRegistry.get("lab.processing.duration")
+                .tags("path", "CONSUME", "outcome", "SUCCEEDED").timer().count() - completed).isEqualTo(1);
+        var id = createDeadLetter();
+        assertThat(replay(id, 0, 0).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(metricCount("lab.processing.attempts", "path", "REPLAY") - replayAttempts).isEqualTo(1);
+        assertThat(metricCount("lab.processing.attempts", "path", "CONSUME") - attempts).isEqualTo(3);
+
+        var scrape = restTemplate.getForEntity("http://localhost:" + port + "/actuator/prometheus", String.class);
+        assertThat(scrape.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(scrape.getBody()).contains("lab_processing_duration_seconds_bucket", "lab_retries_total")
+                .doesNotContain(success.messageId().toString(), id.toString(), success.payload(), "payload=")
+                .doesNotContainPattern("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+    }
+
+    @Test
+    void dlqMetricsOnlyCountCommittedInsertsAndDistinguishDuplicates() {
+        double inserted = metricCount("lab.dlq.store", "outcome", "INSERTED");
+        double duplicate = metricCount("lab.dlq.store", "outcome", "DUPLICATE");
+        var message = new RetryMessage(UUID.randomUUID(), "커밋 계측 검증", 3, Instant.now());
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            deadLetters.store(message, 3);
+            status.setRollbackOnly();
+        });
+        assertThat(metricCount("lab.dlq.store", "outcome", "INSERTED")).isEqualTo(inserted);
+        assertThat(deadLetterRepository.existsById(message.messageId())).isFalse();
+        deadLetters.store(message, 3);
+        deadLetters.store(message, 3);
+        assertThat(metricCount("lab.dlq.store", "outcome", "INSERTED") - inserted).isEqualTo(1);
+        assertThat(metricCount("lab.dlq.store", "outcome", "DUPLICATE") - duplicate).isEqualTo(1);
+    }
+
+    @Test
+    void replayConflictDoesNotCountAsExecutedReplay() {
+        var id = createDeadLetter();
+        long before = meterRegistry.get("lab.processing.duration")
+                .tags("path", "REPLAY", "outcome", "SUCCEEDED").timer().count();
+        double conflicts = meterRegistry.get("lab.dlq.conflicts").counter().count();
+        assertThat(replay(id, 99, 0).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(meterRegistry.get("lab.dlq.conflicts").counter().count() - conflicts).isEqualTo(1);
+        assertThat(meterRegistry.get("lab.processing.duration")
+                .tags("path", "REPLAY", "outcome", "SUCCEEDED").timer().count()).isEqualTo(before);
+    }
+
+    private double metricCount(String name, String key, String value) {
+        return meterRegistry.get(name).tag(key, value).counter().count();
+    }
+
     @Test
     void concurrentInitialInsertsProduceOneDurableRow() throws Exception {
         var id = UUID.randomUUID();
@@ -167,8 +229,8 @@ class RetryStormControlLabApplicationTest {
         messageListener.consume(message);
         assertThat(deadLetters.get(id).originalAttempts()).isEqualTo(3);
         assertThat(deadLetters.get(id).version()).isZero();
-        assertThat(restTemplate.getForObject("http://localhost:" + port + "/api/v1/messages/" + id,
-                ProcessingSnapshot.class).state()).isEqualTo(ProcessingState.FAILED);
+        assertThat(restTemplate.getForObject("http://localhost:" + port + "/api/v1/messages/{id}",
+                ProcessingSnapshot.class, id).state()).isEqualTo(ProcessingState.FAILED);
     }
 
     @Test
@@ -188,7 +250,7 @@ class RetryStormControlLabApplicationTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM retry_lab.dead_letters WHERE message_id = ?",
                 Integer.class, published.messageId())).isEqualTo(1);
-        var response = restTemplate.getForEntity(dlqUrl(published.messageId()), String.class);
+        var response = restTemplate.getForEntity(dlqUrl(), String.class, published.messageId());
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).doesNotContain("payload", "외부 응답에");
     }
@@ -287,20 +349,20 @@ class RetryStormControlLabApplicationTest {
         var parked = objectMapper.readValue(raw.getBody(), RetryMessage.class);
         assertThat(parked.messageId()).isEqualTo(published.messageId());
         assertThat(deadLetterRepository.existsById(published.messageId())).isFalse();
-        assertThat(restTemplate.getForObject("http://localhost:" + port + "/api/v1/messages/"
-                + published.messageId(), ProcessingSnapshot.class).state())
+        assertThat(restTemplate.getForObject("http://localhost:" + port + "/api/v1/messages/{id}",
+                ProcessingSnapshot.class, published.messageId()).state())
                 .isEqualTo(ProcessingState.PERSISTENCE_FAILED);
     }
 
     @Test
     void dlqApiValidatesInputAndHandlesMissingIds() {
-        assertThat(restTemplate.getForEntity(dlqUrl(UUID.randomUUID()), String.class).getStatusCode())
+        assertThat(restTemplate.getForEntity(dlqUrl(), String.class, UUID.randomUUID()).getStatusCode())
                 .isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(restTemplate.getForEntity(
                 "http://localhost:" + port + "/api/v1/dlq?size=101", String.class).getStatusCode())
                 .isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(restTemplate.postForEntity(dlqUrl(UUID.randomUUID()) + "/reprocess",
-                Map.of("failuresBeforeSuccess", 0), String.class).getStatusCode())
+        assertThat(restTemplate.postForEntity(dlqUrl() + "/reprocess",
+                Map.of("failuresBeforeSuccess", 0), String.class, UUID.randomUUID()).getStatusCode())
                 .isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
@@ -311,15 +373,15 @@ class RetryStormControlLabApplicationTest {
         return id;
     }
 
-    private String dlqUrl(UUID id) {
-        return "http://localhost:" + port + "/api/v1/dlq/" + id;
+    private String dlqUrl() {
+        return "http://localhost:" + port + "/api/v1/dlq/{id}";
     }
 
     private ResponseEntity<DeadLetterView> replay(
             UUID id, long version, int failures) {
-        return restTemplate.postForEntity(dlqUrl(id) + "/reprocess",
+        return restTemplate.postForEntity(dlqUrl() + "/reprocess",
                 new DeadLetterController.ReprocessRequest(version, failures),
-                DeadLetterView.class);
+                DeadLetterView.class, id);
     }
 
     @Test
@@ -407,8 +469,8 @@ class RetryStormControlLabApplicationTest {
         long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
         while (System.nanoTime() < deadline) {
             var response = restTemplate.getForEntity(
-                    "http://localhost:" + port + "/api/v1/messages/" + messageId,
-                    ProcessingSnapshot.class);
+                    "http://localhost:" + port + "/api/v1/messages/{id}",
+                    ProcessingSnapshot.class, messageId);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 var snapshot = response.getBody();
                 if (snapshot.state() == ProcessingState.SUCCEEDED

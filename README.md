@@ -1,6 +1,6 @@
 # retry-storm-control-lab
 
-RabbitMQ 재시도 전략을 로컬에서 재현하고 비교하기 위한 개인 실험 프로젝트다. 현재 4단계까지 완료되어 Fixed와 Exponential Backoff + Jitter를 선택하고, PostgreSQL DLQ에 저장한 최종 실패를 재처리할 수 있다.
+RabbitMQ 재시도 전략을 로컬에서 재현하고 비교하기 위한 개인 실험 프로젝트다. Fixed와 Exponential Backoff + Jitter를 선택하고, PostgreSQL DLQ에 저장한 최종 실패를 재처리할 수 있다. 5단계에서 Micrometer·로컬 Prometheus와 k6 검증 도구를 추가했다.
 
 ## 비용과 비밀정보 원칙
 
@@ -135,4 +135,14 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8080/api/v1/dlq/$id/reproc
 
 ## 현재 범위
 
-메시지 발행·소비, Fixed, Exponential Backoff + Jitter, JPA DLQ와 버전 기반 재처리까지 구현했다. 관측성과 실제 부하 비교는 미구현이며, 사용자 승인 후 `PROGRESS.md`의 5·6단계를 진행한다.
+메시지 발행·소비, Fixed, Exponential Backoff + Jitter, JPA DLQ와 버전 기반 재처리, 로컬 관측성과 부하 도구까지 구현했다. 반복 비교 실측과 블로그는 사용자 승인 후 6단계에서 진행한다.
+
+## 로컬 관측성과 부하 도구
+
+[관측성 안내](docs/observability.md)에 지표 정의, PromQL, 로컬 실행 명령과 결과 해석의 한계를 정리했다. 유료 서비스나 계정 등록 없이 Docker의 Prometheus·k6를 실행한다. 독립 기능 검증은 다음 명령으로 수행한다.
+
+```powershell
+powershell -NoProfile -File scripts/verify-stage5.ps1
+```
+
+12건의 합성 메시지 종료와 DLQ·재처리·Prometheus 수집값을 확인하고 전용 리소스를 정리한다. 이 smoke 검증을 전략별 성능 비교 결과로 사용하지 않는다.
