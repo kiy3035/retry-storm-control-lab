@@ -64,6 +64,15 @@ class AnalysisTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             analysis.summarize(value)
 
+    def test_wrong_dlq_state_rejected(self):
+        value = fixture()
+        value["messages"][0].update(state="FAILED", failuresBeforeSuccess=3)
+        value["dlq"] = [{"messageId": "synthetic", "state": "PROCESSING", "originalAttempts": 3,
+                         "failureCode": "RETRY_EXHAUSTED"}]
+        value["replays"] = [{"messageId": "synthetic", "state": "SUCCEEDED", "replayAttempts": 1}]
+        with self.assertRaises(ValueError):
+            analysis.summarize(value)
+
     def test_nonterminal_state_rejected(self):
         value = fixture()
         value["messages"][0]["state"] = "PROCESSING"

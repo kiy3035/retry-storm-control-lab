@@ -1,6 +1,7 @@
 import argparse
 import csv
 import datetime as dt
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -56,6 +57,9 @@ def summarize(trial):
     failed_ids = {r["messageId"] for r in records if r["state"] == "FAILED"}
     if {r["messageId"] for r in trial["dlq"]} != failed_ids or len(trial["dlq"]) != len(failed_ids):
         raise ValueError("실패 메시지와 DLQ 원본 불일치")
+    if any(r["state"] != "PENDING" or r["originalAttempts"] != 3
+           or r["failureCode"] != "RETRY_EXHAUSTED" for r in trial["dlq"]):
+        raise ValueError("DLQ 저장 상태 불일치")
     if {r["messageId"] for r in trial["replays"]} != failed_ids or len(trial["replays"]) != len(failed_ids):
         raise ValueError("재처리 결과 누락 또는 중복")
     if any(r["state"] != "SUCCEEDED" or r["replayAttempts"] != 1 for r in trial["replays"]):
@@ -113,7 +117,12 @@ def analyze(folder):
             key: stats([row[key] for row in rows]) for key in rows[0]
             if key not in ("trialId", "policy", "repetition") and rows[0][key] is not None
         }
-    result = {"percentile": "nearest-rank; median은 중앙 두 값의 평균", "runs": summaries, "policies": groups}
+    result = {
+        "analyzerSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "percentile": "nearest-rank; median은 중앙 두 값의 평균",
+        "runs": summaries,
+        "policies": groups,
+    }
     (folder / "summary.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (folder / "retry-buckets.json").write_text(json.dumps(bucket_results, indent=2) + "\n", encoding="utf-8")
     with (folder / "summary.csv").open("w", newline="", encoding="utf-8") as output:

@@ -1,5 +1,17 @@
 # 결정 기록
 
+## 2026-09-05: 반복 비교 실험과 원본 결과
+
+- Fixed 200ms, Exponential 200→400ms, Exponential+Jitter ±50%를 비교한다. Fixed와 지수 정책의 총 대기가 다르므로 차이를 Jitter 단독 효과로 쓰지 않는다.
+- 정책별 3회, 측정 96건·워밍업 16건, 소비자 8개·prefetch 1로 제한하고 반복마다 정책 순서를 순환한다. 기본 앱 동시성은 바꾸지 않는다.
+- 동일한 [2,2,2,3] 실패 패턴을 쓴다. 25% DLQ 비율은 의도한 입력이므로 개선 지표가 아니다.
+- 완료시간은 서버 publishedAt/completedAt, retry bucket은 최초를 제외한 attempt 원본 시각으로 계산한다.
+- nearest-rank 분위수와 짝수 표본 중앙 두 값 평균을 사용한다. 정책 표는 실행별 통계 3개의 중앙값이다.
+- pg_stat_statements는 전용 임시 DB에서 SQL 본문 없이 runtime 계정 call 수만 읽는다. 서버 전체 QPS로 표현하지 않는다.
+- 미완료 상태, 입력·시각·예산·DLQ 불일치는 fail-closed하고 원본부터 문서 표까지 별도 검증기로 대조한다.
+- Jitter seed는 고정하지 않는다. 코드·계획·입력·JAR hash를 보존하되 같은 시간 수치를 약속하지 않는다.
+- 3회 로컬 합성 표본으로 통계적 유의성이나 운영 성능을 주장하지 않는다.
+
 ## 2026-09-04: 5단계 관측성과 로컬 부하 도구
 
 - Micrometer Prometheus registry만 추가하며 버전은 기존 Spring Boot 의존성 관리에 맡긴다. 유료 모니터링 adapter나 cloud 출력은 구성하지 않는다.

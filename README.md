@@ -1,6 +1,6 @@
 # retry-storm-control-lab
 
-RabbitMQ 재시도 전략을 로컬에서 재현하고 비교하기 위한 개인 실험 프로젝트다. Fixed와 Exponential Backoff + Jitter를 선택하고, PostgreSQL DLQ에 저장한 최종 실패를 재처리할 수 있다. 5단계에서 Micrometer·로컬 Prometheus와 k6 검증 도구를 추가했다.
+RabbitMQ 재시도 전략을 로컬에서 재현하고 비교한 개인 실험 프로젝트다. Fixed와 Exponential Backoff + Jitter, PostgreSQL DLQ 재처리, 로컬 관측성과 부하 도구를 구현하고 6단계 실제 반복 실험과 보고서까지 작성했다.
 
 ## 비용과 비밀정보 원칙
 
@@ -14,6 +14,7 @@ RabbitMQ 재시도 전략을 로컬에서 재현하고 비교하기 위한 개�
 
 - Java 21
 - Docker와 Docker Compose
+- Python 3.12: 6단계 수집·분석 시 필요, 추가 패키지 없음
 
 ## 로컬 실행
 
@@ -135,7 +136,7 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8080/api/v1/dlq/$id/reproc
 
 ## 현재 범위
 
-메시지 발행·소비, Fixed, Exponential Backoff + Jitter, JPA DLQ와 버전 기반 재처리, 로컬 관측성과 부하 도구까지 구현했다. 반복 비교 실측과 블로그는 사용자 승인 후 6단계에서 진행한다.
+1~6단계 구현과 검증을 마쳤다. 운영용 인증·exactly-once·PROCESSING 자동 복구는 구현 범위 밖이며 [안전 경계](docs/threat-model.md)에 한계를 기록했다.
 
 ## 로컬 관측성과 부하 도구
 
@@ -146,3 +147,27 @@ powershell -NoProfile -File scripts/verify-stage5.ps1
 ```
 
 12건의 합성 메시지 종료와 DLQ·재처리·Prometheus 수집값을 확인하고 전용 리소스를 정리한다. 이 smoke 검증을 전략별 성능 비교 결과로 사용하지 않는다.
+
+## 실제 반복 실험과 결과
+
+```powershell
+python -m unittest discover -s scripts -p test_analysis.py -v
+python scripts/run-experiment.py
+python scripts/analyze-experiment.py results/<출력된-run-id>
+```
+
+수집기는 `experiments/plan.json`의 동일 입력으로 Fixed·지수 대조군·Jitter를 3회씩 실행한다. 기본 앱 동시성은 보존하고 실험 프로세스만 소비자 8개·prefetch 1을 적용한다. 출력 폴더는 매번 새로 만들며 전용 Docker 리소스는 정리한다. 기존 실험·DB·중첩 저장소를 삭제하지 않는다.
+
+완료한 결과를 검증하려면:
+
+```powershell
+python scripts/verify-report.py results/stage6-20260904T150000Z
+```
+
+- [실측 보고서와 재현 조건](docs/experiment-report.md)
+- [한국어 블로그 초안](docs/blog-draft.md)
+- [원본 JSON과 환경](results/stage6-20260904T150000Z/manifest.json)
+- [실행별 CSV](results/stage6-20260904T150000Z/summary.csv)
+- [구현 구조](docs/architecture.md)
+
+이번 표본에서는 Jitter가 지수 대조군보다 짧은 구간 재시도 집중도를 낮췄지만 Fixed보다 완료시간이 짧지는 않았다. 개인 로컬 합성 실험의 관찰이며 일반적인 성능 보장은 아니다.
