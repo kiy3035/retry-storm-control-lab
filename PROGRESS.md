@@ -6,9 +6,9 @@
 
 ## 현재 단계
 
-- 현재 단계: 3단계 완료, 사용자 검토 대기
+- 현재 단계: 4단계 완료, 사용자 검토 대기
 - 상태: COMPLETED
-- 마지막 갱신: 2026-09-03 +09:00
+- 마지막 갱신: 2026-09-04 +09:00
 
 ## 단계 현황
 
@@ -17,7 +17,7 @@
 | 1 | 프로젝트와 로컬 인프라 | COMPLETED |
 | 2 | 메시지 발행·소비와 Fixed 재시도 | COMPLETED |
 | 3 | Exponential Backoff + Jitter | COMPLETED |
-| 4 | JPA DLQ·재처리 API·낙관적 락 | NOT_STARTED |
+| 4 | JPA DLQ·재처리 API·낙관적 락 | COMPLETED |
 | 5 | Micrometer·Prometheus·k6 | NOT_STARTED |
 | 6 | 실제 비교 실험·보고서·블로그 | NOT_STARTED |
 
@@ -31,6 +31,11 @@
 
 ## 완료한 작업
 
+- 4단계: Flyway V3와 JPA DLQ, message_id 기반 동시 중복 저장 방지
+- 4단계: 목록·상세·버전 조건부 재처리 API, payload 비노출
+- 4단계: 선점/완료 트랜잭션 분리, 실제 JPA 낙관적 락과 HTTP 409 처리
+- 4단계: DB 저장 실패의 parking 큐 격리, 재전달별 최대 시도 예산 유지
+- 4단계: 고유 Compose 환경에서 실행 JAR 재시작·DLQ 보존·재처리 검증 스크립트
 - Java 21, Spring Boot 3.5.16, Gradle 8.12.1 프로젝트와 Wrapper 구성
 - PostgreSQL 16.9와 RabbitMQ 4.1.4 Docker Compose 서비스, 볼륨, healthcheck 구성
 - Flyway V1 기본 `retry_lab.lab_metadata` 스키마와 deterministic baseline 행 구성
@@ -65,6 +70,11 @@
 | `gradlew.bat --no-daemon test --tests dev.retrystorm.lab.retry.ExponentialJitterBackOffPolicyTest --rerun-tasks` | SUCCESS, 5/5 성공, 16초 | 지수 증가, 최대 지연, Jitter 경계, 정책 선택, 동시 분산 |
 | `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 10/10 성공, 34초 | Jitter 단위 테스트 5건과 기존 Testcontainers 통합 테스트 5건 |
 | `EXPONENTIAL_JITTER`로 동적 빈 포트 Compose와 Boot JAR 실행 | SUCCESS | health `UP`, 3회째 `SUCCEEDED`, 간격 272ms·533ms |
+| 4단계 초기 변경 후 `gradlew.bat --no-daemon test` | SUCCESS, 10/10 성공, 1분 7초 | 기존 테스트 회귀 없음 |
+| 4단계 테스트 추가 후 `gradlew.bat --no-daemon test --rerun-tasks` | FAILED, 17건 중 1건 실패, 58초 | 격리 큐 테스트의 수신 타입 변환 문제, 아래 원인 기록 |
+| 수신 타입 수정 후 동일 전체 명령 | SUCCESS, 17/17 성공, 58초 | 격리 큐 이동 포함 통과 |
+| 4단계 최종 `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 19/19 성공, 49초 | Testcontainers 통합 14건 + Jitter 단위 5건, 실패·오류·skip 0 |
+| `scripts/verify-stage4.ps1` | SUCCESS, 내부 bootJar 13초 | 실제 JAR 재시작 전후 DLQ PENDING, 재처리 SUCCEEDED, stale version HTTP 409 |
 
 테스트 개수와 성공·실패 개수를 실제 출력 기준으로 기록한다.
 
@@ -86,6 +96,22 @@
 
 3단계 검증용 `retry-storm-stage3-check`도 같은 방식으로 실행 후 컨테이너, 네트워크, 볼륨을 제거했다.
 
+4단계 검증용 `retry-storm-stage4-check-e48f9624`의 PostgreSQL·RabbitMQ가 healthy가 된 뒤 실행 JAR을 기동했다. 최종 실패를 저장하고 JAR 프로세스만 종료·재시작해 같은 DB의 DLQ가 보존되는지 확인했다. 실제 출력은 다음과 같다.
+
+```text
+HEALTH=UP
+DLQ_BEFORE_RESTART=PENDING
+DLQ_AFTER_RESTART=PENDING
+ORIGINAL_ATTEMPTS=3
+REPLAY_STATE=SUCCEEDED
+REPLAY_ATTEMPTS=1
+REPROCESS_COUNT=1
+FINAL_VERSION=2
+STALE_VERSION_HTTP=409
+```
+
+검증 후 전용 컨테이너·볼륨·네트워크와 앱 프로세스를 정리했다. 비밀번호는 환경 변수로만 주입했다. 4단계 환경 확인 시각은 2026-09-04 20:52:15 +09:00이며 아래와 동일한 OS·CPU·RAM·Docker 환경, Temurin 21.0.8+9 LTS, PostgreSQL 16.9, RabbitMQ 4.1.4를 사용했다. 이 검증은 기능·내구성 확인이며 부하 성능 측정이 아니다.
+
 검증 환경:
 
 - 실행 시각: 2026-09-01 20:56:43 +09:00
@@ -100,7 +126,7 @@
 
 - Gradle Wrapper를 이용한 빌드와 테스트
 - 환경 변수로 비밀값과 포트를 주입하는 로컬 PostgreSQL·RabbitMQ 실행
-- 애플리케이션 시작 시 migration 전용 계정으로 Flyway V1/V2 적용
+- 애플리케이션 시작 시 migration 전용 계정으로 Flyway V1/V2/V3 적용, JPA 스키마 검증
 - 제한된 runtime DB 계정으로 애플리케이션 datasource 연결
 - Actuator를 통한 PostgreSQL·RabbitMQ 연결 상태 확인
 - Testcontainers를 통한 동일 기반의 자동 통합 검증
@@ -114,14 +140,20 @@
 
 ## 미완료 작업
 
-- 4단계 전체
 - 5단계 전체
 - 6단계 전체
-- 프로세스 재시작 뒤 처리 상태 보존과 최종 실패 DLQ 저장은 4단계 범위
+- 일반 메시지 tracker는 메모리 기반이며 재처리 성공을 반영하지 않음. 재시작 후 최종 실패·재처리 상태는 DB DLQ API에서 확인
+- 재처리 선점 후 장애로 PROCESSING에 남는 행의 자동 복구와 parking 자동 소비는 미구현
+- DB와 RabbitMQ의 원자적 커밋, 외부 부수 효과 exactly-once, 브로커 동시 장애까지의 DLX 무손실 보장은 하지 않음
 - 실제 다건 부하에서 Fixed와 Jitter를 비교하는 수치 측정은 5·6단계 범위
 
 ## 발생한 오류와 확인된 원인
 
+- 증상: 4단계 첫 17건 실행에서 parking 수신 테스트 1건 실패
+  - 재현 명령: `gradlew.bat --no-daemon test --rerun-tasks`
+  - 확인한 원인: 테스트의 범용 `receiveAndConvert`가 RetryMessage 타입 헤더를 기본 trusted packages 밖으로 판단해 거부함. 브로커 격리 큐 이동은 실행됨
+  - 수정 내용: 테스트에서 raw 메시지를 수신한 뒤 명시적 RetryMessage DTO로 역직렬화. trusted packages를 확장하지 않음
+  - 수정 후 검증: 17/17 성공, 동시 최초 저장과 재전달 예산 검증을 추가한 최종 19/19 성공
 - 증상: 첫 Gradle 실행이 Windows native library를 로드하지 못했고 작업공간 Gradle 홈에서는 Spring Boot 플러그인을 찾지 못했다.
   - 재현 명령: 캐시 설정 없이 로컬 Gradle로 `wrapper` 실행
   - 확인한 원인: 샌드박스 임시 디렉터리 제약과 빈 작업공간 Gradle 캐시
@@ -176,11 +208,24 @@
 
 ## 다음 대화에서 시작할 작업
 
-1. 사용자가 3단계 PR을 검토하고 merge
-2. 사용자가 `계속 진행해`라고 요청한 경우에만 4단계 시작
-3. PostgreSQL JPA DLQ, 중복 저장 방지, 재처리 API, 낙관적 락 구현
+1. 사용자가 4단계 PR을 검토하고 merge
+2. 사용자가 `계속 진행해`라고 요청한 경우에만 5단계 시작
+3. AGENTS.md, PROJECT_SPEC.md, CODEX_PROMPT.md, PROGRESS.md와 원격 merge 상태를 확인
+4. Micrometer·로컬 Prometheus·k6 관측성과 부하 도구 구성. 비교 실측·블로그는 6단계
 
 ## 실행 및 재현 명령
+
+4단계 전체 테스트와 독립 실제 기동 검증 명령:
+
+```powershell
+$env:GRADLE_USER_HOME = (Resolve-Path .gradle-user-home).Path
+$env:JAVA_TOOL_OPTIONS = '-Djava.io.tmpdir=' + (Resolve-Path .tmp).Path
+$env:DOCKER_HOST = 'npipe:////./pipe/docker_engine'
+./gradlew.bat --no-daemon test --rerun-tasks
+powershell -NoProfile -File scripts/verify-stage4.ps1
+```
+
+위 캐시·임시 디렉터리는 이 작업 환경의 Windows 샌드박스용이다. 일반 환경은 README의 `gradlew.bat test`를 사용한다. 검증 스크립트는 필요한 디렉터리를 생성한다.
 
 다음 명령 흐름은 이번 단계에서 실제 성공했다. 비밀번호 변수는 README처럼 현재 셸에서 생성해 주입한다.
 
@@ -206,7 +251,16 @@ $env:LAB_RETRY_MAX_DELAY = '5s'
 $env:LAB_RETRY_JITTER_RATIO = '0.5'
 ```
 
-## 3단계 완료 사용자 보고용 요약
+## 4단계 완료 사용자 보고용 요약
+
+- 완료: PostgreSQL JPA DLQ, 동시 중복 저장 방지, 버전 조건부 재처리, 저장 실패 격리
+- 최종 전체 테스트: 19/19 성공, 실패 0, 오류 0, skip 0, 49초
+- 실제 기동: 재시작 전후 PENDING 보존, 최초 3회 실패, 재처리 1회 성공, 최종 version 2, 이전 버전 409
+- 상태: 4단계 COMPLETED, PR 검토 대기. 5단계 미시작
+- 한계: 일반 tracker는 메모리 기반, PROCESSING 장애 자동 복구와 parking 자동 재처리 미구현, exactly-once 보장 없음
+- 검토 본문: `docs/pr-stage-4.md`, 실제 재현: `scripts/verify-stage4.ps1`
+
+## 3단계 완료 당시 사용자 보고용 요약
 
 ```text
 3단계를 구현하고 검증했습니다.
@@ -258,6 +312,11 @@ $env:LAB_RETRY_JITTER_RATIO = '0.5'
 
 ## 변경한 주요 파일
 
+- `src/main/java/dev/retrystorm/lab/dlq/*`: JPA 엔티티·저장·재처리·버전 충돌
+- `src/main/java/dev/retrystorm/lab/api/DeadLetterController.java`: DLQ 목록·상세·재처리 API
+- `src/main/resources/db/migration/V3__create_dead_letters.sql`: DLQ 스키마와 인덱스
+- `scripts/verify-stage4.ps1`: 실행 JAR 재시작과 DLQ 내구성·재처리 검증
+- `docs/pr-stage-4.md`: 4단계 변경 전후와 실제 검증 결과
 - `build.gradle`, `settings.gradle`, `gradlew*`, `gradle/wrapper/*`: 빌드와 Wrapper
 - `compose.yaml`: PostgreSQL·RabbitMQ 서비스, 볼륨, healthcheck
 - `.env.example`, `.gitignore`, `.gitattributes`: 로컬 환경과 저장소 기본 규칙

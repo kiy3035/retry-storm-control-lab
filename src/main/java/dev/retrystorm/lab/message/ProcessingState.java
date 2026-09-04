@@ -4,5 +4,6 @@ public enum ProcessingState {
     PENDING,
     PROCESSING,
     SUCCEEDED,
-    FAILED
+    FAILED,
+    PERSISTENCE_FAILED
 }

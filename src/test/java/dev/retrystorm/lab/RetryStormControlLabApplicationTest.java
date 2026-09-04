@@ -1,5 +1,32 @@
 package dev.retrystorm.lab;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.retrystorm.lab.api.DeadLetterController;
+import dev.retrystorm.lab.config.RabbitMessagingConfiguration;
+import dev.retrystorm.lab.dlq.DeadLetterRepository;
+import dev.retrystorm.lab.dlq.DeadLetterService;
+import dev.retrystorm.lab.dlq.DeadLetterState;
+import dev.retrystorm.lab.dlq.DeadLetterView;
+import dev.retrystorm.lab.message.RetryMessage;
+import dev.retrystorm.lab.message.RetryMessageListener;
+import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -86,6 +113,214 @@ class RetryStormControlLabApplicationTest {
 
     @LocalServerPort
     int port;
+
+    @MockitoSpyBean
+    DeadLetterService deadLetters;
+
+    @Autowired
+    DeadLetterRepository deadLetterRepository;
+
+    @Autowired
+    PlatformTransactionManager transactionManager;
+
+    @Autowired
+    RabbitTemplate rabbitTemplate;
+
+    @Autowired
+    ObjectMapper objectMapper;
+
+    @Autowired
+    RetryMessageListener messageListener;
+
+    @Test
+    void concurrentInitialInsertsProduceOneDurableRow() throws Exception {
+        var id = UUID.randomUUID();
+        var message = new RetryMessage(
+                id, "동시 저장 합성 메시지", 3, Instant.now());
+        var gate = new CountDownLatch(1);
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            Callable<Void> save = () -> {
+                gate.await();
+                deadLetters.store(message, 3);
+                return null;
+            };
+            var first = pool.submit(save);
+            var second = pool.submit(save);
+            gate.countDown();
+            first.get(10, TimeUnit.SECONDS);
+            second.get(10, TimeUnit.SECONDS);
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM retry_lab.dead_letters WHERE message_id = ?",
+                    Integer.class, id)).isEqualTo(1);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void redeliveryRetainsPerDeliveryBudgetAndDoesNotDuplicateDlq() {
+        var id = UUID.randomUUID();
+        var message = new RetryMessage(
+                id, "재전달 합성 메시지", 3, Instant.now());
+        messageListener.consume(message);
+        messageListener.consume(message);
+        assertThat(deadLetters.get(id).originalAttempts()).isEqualTo(3);
+        assertThat(deadLetters.get(id).version()).isZero();
+        assertThat(restTemplate.getForObject("http://localhost:" + port + "/api/v1/messages/" + id,
+                ProcessingSnapshot.class).state()).isEqualTo(ProcessingState.FAILED);
+    }
+
+    @Test
+    void exhaustedMessageIsPersistedOnceAndPayloadIsNotExposed() throws Exception {
+        var published = publish("외부 응답에 노출하지 않을 합성 본문", 3);
+        awaitTerminalState(published.messageId());
+        var entry = deadLetters.get(published.messageId());
+        assertThat(entry.state()).isEqualTo(DeadLetterState.PENDING);
+        assertThat(entry.originalAttempts()).isEqualTo(3);
+        assertThat(entry.failureCode()).isEqualTo("RETRY_EXHAUSTED");
+
+        var duplicate = new RetryMessage(
+                published.messageId(), "중복 합성 본문", 3, Instant.now());
+        var first = CompletableFuture.runAsync(() -> deadLetters.store(duplicate, 3));
+        var second = CompletableFuture.runAsync(() -> deadLetters.store(duplicate, 3));
+        CompletableFuture.allOf(first, second).get(10, TimeUnit.SECONDS);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM retry_lab.dead_letters WHERE message_id = ?",
+                Integer.class, published.messageId())).isEqualTo(1);
+        var response = restTemplate.getForEntity(dlqUrl(published.messageId()), String.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).doesNotContain("payload", "외부 응답에");
+    }
+
+    @Test
+    void replaySucceedsAndStaleVersionIsRejected() throws Exception {
+        var id = createDeadLetter();
+        var entry = deadLetters.get(id);
+        var response = replay(id, entry.version(), 0);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().state()).isEqualTo(DeadLetterState.SUCCEEDED);
+        assertThat(response.getBody().replayAttempts()).isEqualTo(1);
+        assertThat(response.getBody().reprocessCount()).isEqualTo(1);
+        assertThat(replay(id, entry.version(), 0).getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void failedReplayCanBeRetriedWithNewVersion() throws Exception {
+        var id = createDeadLetter();
+        var failed = replay(id, deadLetters.get(id).version(), 3).getBody();
+        assertThat(failed.state()).isEqualTo(DeadLetterState.FAILED);
+        assertThat(failed.replayAttempts()).isEqualTo(3);
+        var succeeded = replay(id, failed.version(), 0).getBody();
+        assertThat(succeeded.state()).isEqualTo(DeadLetterState.SUCCEEDED);
+        assertThat(succeeded.reprocessCount()).isEqualTo(2);
+    }
+
+    @Test
+    void concurrentReplayRequestsHaveOnlyOneWinner() throws Exception {
+        var id = createDeadLetter();
+        long version = deadLetters.get(id).version();
+        var gate = new CountDownLatch(1);
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            Callable<HttpStatusCode> request = () -> {
+                gate.await();
+                return replay(id, version, 2).getStatusCode();
+            };
+            var first = pool.submit(request);
+            var second = pool.submit(request);
+            gate.countDown();
+            assertThat(List.of(first.get(10, TimeUnit.SECONDS),
+                    second.get(10, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(HttpStatus.OK, HttpStatus.CONFLICT);
+            assertThat(deadLetters.get(id).reprocessCount()).isEqualTo(1);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void jpaVersionRejectsSimultaneousUpdatesAfterBothReadTheSameVersion() throws Exception {
+        var id = createDeadLetter();
+        var barrier = new CyclicBarrier(2);
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            Callable<Boolean> update = () -> {
+                try {
+                    new TransactionTemplate(transactionManager)
+                            .executeWithoutResult(status -> {
+                                var entry = deadLetterRepository.findById(id).orElseThrow();
+                                try {
+                                    barrier.await(10, TimeUnit.SECONDS);
+                                } catch (Exception exception) {
+                                    throw new IllegalStateException("동시성 검증 동기화 실패", exception);
+                                }
+                                entry.claim(entry.view().version());
+                                deadLetterRepository.flush();
+                            });
+                    return true;
+                } catch (OptimisticLockingFailureException exception) {
+                    return false;
+                }
+            };
+            var first = pool.submit(update);
+            var second = pool.submit(update);
+            assertThat(List.of(first.get(15, TimeUnit.SECONDS),
+                    second.get(15, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(true, false);
+            assertThat(deadLetters.get(id).version()).isEqualTo(1);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void databaseStoreFailureRoutesMessageToParkingQueue() throws Exception {
+        Mockito.doThrow(new IllegalStateException("합성 DB 저장 실패"))
+                .when(deadLetters).store(ArgumentMatchers.argThat(
+                        message -> message.payload().equals("격리 경로 검증")),
+                        ArgumentMatchers.anyInt());
+        var published = publish("격리 경로 검증", 3);
+        var raw = rabbitTemplate.receive(
+                RabbitMessagingConfiguration.PARKING_QUEUE, 10_000);
+        assertThat(raw).isNotNull();
+        var parked = objectMapper.readValue(raw.getBody(), RetryMessage.class);
+        assertThat(parked.messageId()).isEqualTo(published.messageId());
+        assertThat(deadLetterRepository.existsById(published.messageId())).isFalse();
+        assertThat(restTemplate.getForObject("http://localhost:" + port + "/api/v1/messages/"
+                + published.messageId(), ProcessingSnapshot.class).state())
+                .isEqualTo(ProcessingState.PERSISTENCE_FAILED);
+    }
+
+    @Test
+    void dlqApiValidatesInputAndHandlesMissingIds() {
+        assertThat(restTemplate.getForEntity(dlqUrl(UUID.randomUUID()), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(restTemplate.getForEntity(
+                "http://localhost:" + port + "/api/v1/dlq?size=101", String.class).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(restTemplate.postForEntity(dlqUrl(UUID.randomUUID()) + "/reprocess",
+                Map.of("failuresBeforeSuccess", 0), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    private UUID createDeadLetter() {
+        var id = UUID.randomUUID();
+        deadLetters.store(new RetryMessage(
+                id, "재처리 합성 메시지", 3, Instant.now()), 3);
+        return id;
+    }
+
+    private String dlqUrl(UUID id) {
+        return "http://localhost:" + port + "/api/v1/dlq/" + id;
+    }
+
+    private ResponseEntity<DeadLetterView> replay(
+            UUID id, long version, int failures) {
+        return restTemplate.postForEntity(dlqUrl(id) + "/reprocess",
+                new DeadLetterController.ReprocessRequest(version, failures),
+                DeadLetterView.class);
+    }
 
     @Test
     void flywayCreatesDeterministicBaselineAndRuntimeRoleHasNoDdlPrivilege() throws Exception {

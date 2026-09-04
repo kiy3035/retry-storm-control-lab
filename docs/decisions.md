@@ -1,5 +1,16 @@
 # 결정 기록
 
+## 2026-09-04: JPA DLQ와 재처리 경계
+
+- 최종 실패를 Flyway V3의 `retry_lab.dead_letters`에 저장하고 DB 커밋 성공 후 소비를 완료한다. JPA는 `ddl-auto=validate`로 스키마를 확인하며 DDL은 기존 migration 계정만 실행한다.
+- 최초 저장의 동시성은 PostgreSQL 기본 키와 `ON CONFLICT DO NOTHING`으로 처리한다. 이미 저장된 행의 상태나 version을 덮어쓰지 않는다.
+- 재처리는 짧은 선점 트랜잭션 → 트랜잭션 밖의 제한된 재시도 → 짧은 완료 트랜잭션으로 나눈다. 요청의 expectedVersion과 JPA `@Version`을 함께 검사해 동시 실행을 막는다.
+- RabbitMQ 재발행 대신 동일한 합성 처리 로직을 동기 호출한다. 이번 단계에 DB·브로커 이중 쓰기와 outbox를 추가하지 않는다. 선택적 실패 횟수 override는 합성 장애 회복 검증용이다.
+- DB 저장 실패는 무한 재큐잉하지 않고 별도 parking 큐로 격리한다. 기존 큐의 인자를 변경할 수 없으므로 `.v4` 작업 큐·routing key를 새로 쓰고 기존 큐는 보존한다.
+- API는 payload나 예외 원문 없이 메타데이터만 반환한다. 일반 메시지 tracker는 메모리 기반으로 유지하며 DLQ 상태와 별도로 취급한다.
+- 낙관적 락은 동시 재처리를 제한하지만 전역 exactly-once를 보장하지 않는다. PROCESSING 선점 직후 장애의 자동 복구, parking 자동 재처리, 브로커 동시 장애까지의 무손실 보장은 이번 단계에 포함하지 않는다.
+- 검증 스크립트는 고유 Compose 프로젝트와 런타임 임의 비밀번호를 사용하고 자신이 생성한 리소스만 정리한다. 유료 서비스는 사용하지 않는다.
+
 ## 2026-08-31: 1단계 로컬 기반 구성
 
 - Java 21, Spring Boot 3.5.16, Gradle 8.12.1을 사용한다. 현재 로컬 Java 21과 캐시된 Gradle 배포본으로 재현 가능한 조합을 선택했다.
