@@ -15,6 +15,7 @@ import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.retry.backoff.BackOffPolicy;
@@ -26,6 +27,9 @@ import org.springframework.retry.support.RetryTemplate;
 @EnableConfigurationProperties({MessagingProperties.class, RetryProperties.class})
 public class RabbitMessagingConfiguration {
 
+    public static final String PARKING_EXCHANGE = "retry.lab.parking";
+    public static final String PARKING_QUEUE = "retry.lab.parking.v4";
+
     @Bean
     DirectExchange workExchange(MessagingProperties properties) {
         return new DirectExchange(properties.exchange(), true, false);
@@ -33,12 +37,31 @@ public class RabbitMessagingConfiguration {
 
     @Bean
     Queue workQueue(MessagingProperties properties) {
-        return QueueBuilder.durable(properties.workQueue()).build();
+        return QueueBuilder.durable(properties.workQueue())
+                .deadLetterExchange(PARKING_EXCHANGE)
+                .deadLetterRoutingKey(PARKING_QUEUE).build();
     }
 
     @Bean
-    Binding workBinding(Queue workQueue, DirectExchange workExchange, MessagingProperties properties) {
+    Binding workBinding(@Qualifier("workQueue") Queue workQueue,
+            @Qualifier("workExchange") DirectExchange workExchange, MessagingProperties properties) {
         return BindingBuilder.bind(workQueue).to(workExchange).with(properties.routingKey());
+    }
+
+    @Bean
+    DirectExchange parkingExchange() {
+        return new DirectExchange(PARKING_EXCHANGE, true, false);
+    }
+
+    @Bean
+    Queue parkingQueue() {
+        return QueueBuilder.durable(PARKING_QUEUE).build();
+    }
+
+    @Bean
+    Binding parkingBinding(@Qualifier("parkingQueue") Queue queue,
+            @Qualifier("parkingExchange") DirectExchange exchange) {
+        return BindingBuilder.bind(queue).to(exchange).with(PARKING_QUEUE);
     }
 
     @Bean

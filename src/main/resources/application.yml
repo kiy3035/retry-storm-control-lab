@@ -1,6 +1,10 @@
 spring:
   application:
     name: retry-storm-control-lab
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:retry_storm}
     username: ${APP_DB_USER}
@@ -30,8 +34,8 @@ spring:
 lab:
   messaging:
     exchange: retry.lab.exchange
-    work-queue: retry.lab.work
-    routing-key: retry.lab.work
+    work-queue: retry.lab.work.v4
+    routing-key: retry.lab.work.v4
   retry:
     max-attempts: ${LAB_RETRY_MAX_ATTEMPTS:3}
     mode: ${LAB_RETRY_MODE:FIXED}

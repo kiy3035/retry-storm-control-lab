@@ -11,13 +11,17 @@ public class SyntheticMessageProcessor {
         this.tracker = tracker;
     }
 
-    public void process(RetryMessage message) {
-        int attempt = tracker.recordAttempt(message.messageId());
+    public void process(RetryMessage message, int attempt) {
+        tracker.recordAttempt(message.messageId());
+        processAttempt(message, attempt);
+        tracker.markSucceeded(message.messageId());
+    }
+
+    public void processAttempt(RetryMessage message, int attempt) {
         if (attempt <= message.failuresBeforeSuccess()) {
             throw new RetryableMessageProcessingException(
                     "합성 실패가 발생했습니다. messageId=%s, attempt=%d"
                             .formatted(message.messageId(), attempt));
         }
-        tracker.markSucceeded(message.messageId());
     }
 }

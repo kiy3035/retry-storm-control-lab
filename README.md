@@ -1,6 +1,6 @@
 # retry-storm-control-lab
 
-RabbitMQ 재시도 전략을 로컬에서 재현하고 비교하기 위한 개인 실험 프로젝트다. 현재 3단계까지 완료되어 Fixed와 Exponential Backoff + Jitter를 설정으로 선택할 수 있다.
+RabbitMQ 재시도 전략을 로컬에서 재현하고 비교하기 위한 개인 실험 프로젝트다. 현재 4단계까지 완료되어 Fixed와 Exponential Backoff + Jitter를 선택하고, PostgreSQL DLQ에 저장한 최종 실패를 재처리할 수 있다.
 
 ## 비용과 비밀정보 원칙
 
@@ -97,8 +97,42 @@ docker compose down
 .\gradlew.bat test
 ```
 
-테스트는 Flyway baseline, runtime DB 계정과 DDL 거부, RabbitMQ 연결, 애플리케이션 health, Fixed 재시도, 지수 증가, Jitter 경계, 정책 선택, 100개 동시 재시도 지연 분산을 확인한다.
+테스트는 Flyway baseline, runtime DB 계정과 DDL 거부, RabbitMQ 연결, 애플리케이션 health, Fixed 재시도, 지수 증가, Jitter 경계, 정책 선택, 100개 동시 재시도 지연 분산을 확인한다. DLQ 중복 저장 방지, 재처리 성공·실패, 동시 요청과 실제 JPA 낙관적 락 충돌, DB 저장 실패의 격리 큐 이동도 검증한다.
+
+실제 실행 JAR 재시작과 DLQ 내구성까지 한 번에 검증하려면 별도 PowerShell 프로세스에서 다음을 실행한다. 임의 비밀번호와 빈 포트를 사용하며, 종료 시 이 스크립트가 만든 고유 Compose 프로젝트의 컨테이너·볼륨만 제거한다. 기존 로컬 실험 데이터는 건드리지 않는다. 로그는 Git에서 제외한 `build/`에 저장한다.
+
+```powershell
+powershell -NoProfile -File scripts/verify-stage4.ps1
+```
+
+## DLQ 조회와 재처리
+
+최대 시도 횟수를 소진하면 PostgreSQL `retry_lab.dead_letters`에 먼저 커밋한 뒤 RabbitMQ 처리를 완료한다. `message_id` 기본 키와 충돌 무시 삽입으로 같은 메시지의 중복 저장을 막는다. DLQ 목록·상세 API는 payload 없이 상태와 시도 횟수, 버전만 반환한다.
+
+- `GET /api/v1/dlq?page=0&size=20`: 최신 실패 순 목록, size는 1~100
+- `GET /api/v1/dlq/{messageId}`: 상세 조회, 없으면 404
+- `POST /api/v1/dlq/{messageId}/reprocess`: 버전 조건부 동기 재처리
+
+`failuresBeforeSuccess=3`으로 메시지를 발행하고 DLQ에 나타난 뒤 실행한다.
+
+```powershell
+$id = $published.messageId
+$entry = Invoke-RestMethod "http://localhost:8080/api/v1/dlq/$id"
+$replay = @{ expectedVersion = $entry.version; failuresBeforeSuccess = 0 } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://localhost:8080/api/v1/dlq/$id/reprocess" -ContentType 'application/json' -Body $replay
+```
+
+`expectedVersion`은 필수다. `failuresBeforeSuccess`는 로컬 합성 장애의 회복을 재현하는 선택값이며, 생략하면 원래 실패 조건을 유지한다. 재처리는 RabbitMQ에 다시 발행하지 않고 동일한 처리 로직과 선택된 재시도 정책을 호출한다. `PENDING` 또는 `FAILED`만 재처리할 수 있고, 처리 중·완료 상태나 오래된 버전은 409로 거부한다. HTTP 200이어도 재시도 예산을 소진하면 응답의 state는 `FAILED`다. 재시도 대기 중에는 DB 트랜잭션을 유지하지 않는다.
+
+## 4단계 큐 전환과 장애 경계
+
+- 기존 큐의 immutable DLX 인자를 강제로 바꾸지 않도록 새 기본 큐·routing key는 `retry.lab.work.v4`를 사용한다. 기존 `retry.lab.work`는 삭제하지 않는다. 이전 앱으로 기존 큐를 비운 후 새 버전으로 전환한다.
+- DB 저장 실패는 `PERSISTENCE_FAILED`로 구분하고 재큐잉 없이 `retry.lab.parking` exchange의 `retry.lab.parking.v4` 격리 큐로 보낸다. 격리 큐 자동 소비·복구는 구현하지 않았다.
+- DB 커밋과 RabbitMQ ACK는 분산 트랜잭션이 아니다. 저장 후 재전달의 중복 행은 방지하지만 외부 부수 효과의 exactly-once를 보장하지 않는다. classic durable 큐의 DLX 전달도 브로커 동시 장애까지 무손실을 보장하지 않는다.
+- 재처리 선점 후 프로세스가 죽거나 완료 저장에 실패하면 `PROCESSING`에 남을 수 있다. 자동 초기화나 lease 복구는 없으며, 실제 처리 여부를 조사한 뒤 복구해야 한다.
+- 일반 메시지 조회(`/messages`)는 메모리 기반이고 재처리 성공을 반영하지 않는다. 재시작 후 보존되는 최종 실패와 재처리 상태는 `/dlq`에서 확인한다.
+- payload는 재처리를 위해 DB에 보존하므로 합성 데이터만 사용한다. 인증 없는 개인 로컬 실험이며 공개 배포용이 아니다.
 
 ## 현재 범위
 
-메시지 발행·소비, Fixed, Exponential Backoff + Jitter까지 구현했다. 처리 상태는 현재 메모리에 있으므로 애플리케이션 재시작 시 보존되지 않는다. PostgreSQL DLQ, 관측성, 실제 부하 비교는 아직 구현하지 않았으며 `PROGRESS.md`의 단계 순서에 따라 진행한다.
+메시지 발행·소비, Fixed, Exponential Backoff + Jitter, JPA DLQ와 버전 기반 재처리까지 구현했다. 관측성과 실제 부하 비교는 미구현이며, 사용자 승인 후 `PROGRESS.md`의 5·6단계를 진행한다.

@@ -15,6 +15,11 @@ public class MessageProcessingTracker {
 
     private final ConcurrentMap<UUID, ProcessingSnapshot> snapshots = new ConcurrentHashMap<>();
 
+    public void ensureRegistered(RetryMessage message) {
+        snapshots.putIfAbsent(message.messageId(), new ProcessingSnapshot(
+                message.messageId(), ProcessingState.PENDING, 0, List.of()));
+    }
+
     public ProcessingSnapshot register(RetryMessage message) {
         var initial = new ProcessingSnapshot(
                 message.messageId(),
@@ -50,6 +55,10 @@ public class MessageProcessingTracker {
 
     public void markFailed(UUID messageId) {
         updateState(messageId, ProcessingState.FAILED);
+    }
+
+    public void markPersistenceFailed(UUID messageId) {
+        updateState(messageId, ProcessingState.PERSISTENCE_FAILED);
     }
 
     public Optional<ProcessingSnapshot> find(UUID messageId) {
