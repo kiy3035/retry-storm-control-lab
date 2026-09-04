@@ -1,0 +1,9 @@
+services:
+  postgres:
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
+  rabbitmq:
+    volumes:
+      - ./experiments/rabbitmq.conf:/etc/rabbitmq/conf.d/20-experiment.conf:ro
+  prometheus:
+    volumes:
+      - ./experiments/prometheus.yml:/etc/prometheus/prometheus.yml:ro

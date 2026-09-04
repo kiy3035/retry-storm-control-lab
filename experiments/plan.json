@@ -1,0 +1,16 @@
+{
+  "repetitions": 3,
+  "messagesPerRun": 96,
+  "warmupMessages": 16,
+  "failurePattern": [2, 2, 2, 3],
+  "publishWorkers": 16,
+  "consumers": 8,
+  "prefetch": 1,
+  "maxAttempts": 3,
+  "timeoutSeconds": 120,
+  "policies": [
+    {"name": "FIXED_200", "mode": "FIXED", "fixedDelay": "200ms", "initialDelay": "200ms", "multiplier": 2.0, "maxDelay": "5s", "jitterRatio": 0.0},
+    {"name": "EXPONENTIAL", "mode": "EXPONENTIAL_JITTER", "fixedDelay": "200ms", "initialDelay": "200ms", "multiplier": 2.0, "maxDelay": "5s", "jitterRatio": 0.0},
+    {"name": "EXPONENTIAL_JITTER", "mode": "EXPONENTIAL_JITTER", "fixedDelay": "200ms", "initialDelay": "200ms", "multiplier": 2.0, "maxDelay": "5s", "jitterRatio": 0.5}
+  ]
+}

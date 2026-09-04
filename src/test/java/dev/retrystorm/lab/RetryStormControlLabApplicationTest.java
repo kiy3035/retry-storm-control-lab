@@ -425,6 +425,9 @@ class RetryStormControlLabApplicationTest {
         assertThat(completed.state()).isEqualTo(ProcessingState.SUCCEEDED);
         assertThat(completed.attemptCount()).isEqualTo(1);
         assertThat(completed.attemptTimestamps()).hasSize(1);
+        assertThat(completed.publishedAt()).isNotNull();
+        assertThat(completed.completedAt()).isAfterOrEqualTo(completed.publishedAt());
+        assertThat(completed.completedAt()).isAfterOrEqualTo(completed.attemptTimestamps().getFirst());
     }
 
     @Test
