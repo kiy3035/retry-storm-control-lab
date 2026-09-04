@@ -9,6 +9,7 @@
 - 현재 단계: 6단계 완료, 사용자 PR 검토 대기
 - 상태: COMPLETED
 - 마지막 갱신: 2026-09-05 +09:00
+- GitHub PR: [#7](https://github.com/kiy3035/retry-storm-control-lab/pull/7) OPEN, base `main`, head `feat/stage-6-comparison`, 53개 파일, merge state `CLEAN` 확인
 
 ## 단계 현황
 
