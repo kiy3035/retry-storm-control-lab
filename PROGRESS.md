@@ -6,10 +6,10 @@
 
 ## 현재 단계
 
-- 현재 단계: 6단계 완료, 사용자 PR 검토 대기
+- 현재 단계: 1~6단계 `main` 병합 및 최종 검증 완료
 - 상태: COMPLETED
 - 마지막 갱신: 2026-09-05 +09:00
-- GitHub PR: [#7](https://github.com/kiy3035/retry-storm-control-lab/pull/7) OPEN, base `main`, head `feat/stage-6-comparison`, 53개 파일, merge state `CLEAN` 확인
+- GitHub PR: [#7](https://github.com/kiy3035/retry-storm-control-lab/pull/7) MERGED, 2026-09-05 09:07:07 +09:00, merge commit `a745115`
 
 ## 단계 현황
 
@@ -32,6 +32,7 @@
 
 ## 완료한 작업
 
+- 병합 후 마감: 로컬 `main`을 `a745115`로 fast-forward하고 병합본의 Java·Testcontainers·Python·보고서 대조 재검증
 - 6단계: 서버 원본 시각 기반 완료시간과 1초·100ms 재시도 bucket
 - 6단계: 동일 입력의 Fixed·Exponential·Jitter 정책별 3회 순환 실행
 - 6단계: 864건, 시도 2,592회, 재시도 1,728회의 원본 JSON/CSV
@@ -100,6 +101,9 @@
 | `python scripts/analyze-experiment.py results/stage6-20260904T150000Z` | SUCCESS | JSON/CSV, 1초·100ms bucket, 비교 표 |
 | `python scripts/verify-report.py results/stage6-20260904T150000Z` | SUCCESS | 원본→집계→bucket→CSV→보고서·블로그 일치 |
 | 6단계 문서·분석기 보강 후 `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 26/26 성공, 47초 | Java·Testcontainers 최종 회귀, 실패·오류·skip 0 |
+| 병합된 `main` `a745115`에서 `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 26/26 성공, 55초 | 4개 suite, 실패·오류·skip 0 |
+| 병합된 `main`에서 `python -m unittest discover -s scripts -p test_analysis.py -v` | SUCCESS, 9/9 성공, 0.002초 | 분석 경계 최종 회귀 |
+| 병합된 `main`에서 `python scripts/verify-report.py results/stage6-20260904T150000Z` | SUCCESS | 원본→집계→bucket→CSV→보고서·블로그 최종 일치 |
 
 테스트 개수와 성공·실패 개수를 실제 출력 기준으로 기록한다.
 
@@ -192,6 +196,7 @@ STALE_VERSION_HTTP=409
 
 ## 발생한 오류와 확인된 원인
 
+- 병합본 전체 테스트 종료 시 RabbitMQ listener에 connection error/EOF WARN이 1회 출력됐다. Testcontainers가 RabbitMQ를 종료하는 시점의 연결 종료이며 테스트 XML은 26/26, 실패·오류·skip 0이고 Gradle은 55초에 성공 종료했다.
 - 첫 최종 보고서 검증은 외부 실행 승인이 사용량 제한으로 거부됐고, 샌드박스 내부 사용자 Python은 Access Denied였다. 사용자 재개 후 승인된 실행으로 원본 대조와 9/9 테스트를 완료했다. 추가 패키지는 설치하지 않았다.
 - 5단계 첫 Compose 기동: RabbitMQ가 exit 1로 종료했고 PostgreSQL·Prometheus는 healthy였다. 정리 전에 로그를 보존하지 못해 최초 종료 원인은 확정하지 못했다. 같은 plugin 파일의 독립 기동과 이후 전체 기동 2회는 성공했다. 재발 시 조사할 수 있도록 실패 로그를 Git 제외 결과 폴더에 보존하도록 보강했다.
 - 5단계 두 번째 smoke: k6 12건은 통과했으나 DLQ 건수 확인 실패. PowerShell 5의 `@(Invoke-RestMethod ...)`가 JSON 배열을 한 항목으로 감싼 것이 원인이었다. 직접 변수 대입으로 수정 후 DLQ 3건·재처리·Prometheus 검증까지 성공했다.
@@ -254,8 +259,8 @@ STALE_VERSION_HTTP=409
 
 ## 다음 대화에서 시작할 작업
 
-1. 사용자가 6단계 PR을 검토하고 merge
-2. 추가 계획 단계 없음. 사용자 요청 없이 운영화 범위를 시작하지 않음
+1. 계획된 1~6단계와 병합 후 최종 검증이 완료됨. 추가 개발은 새 요구사항과 범위를 합의한 뒤 별도 단계로 시작
+2. 블로그 게시 전 사용자가 `docs/blog-draft.md`의 표현과 공개 범위를 최종 검토
 3. 재실험은 새 run-id에 저장하고 기존 결과를 덮어쓰지 않음
 
 ## 실행 및 재현 명령
