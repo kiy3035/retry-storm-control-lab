@@ -6,7 +6,7 @@
 
 ## 현재 단계
 
-- 현재 단계: 1~6단계 `main` 병합 및 최종 검증 완료
+- 현재 단계: 1~6단계 `main` 병합 및 게시용 블로그 원고 완료
 - 상태: COMPLETED
 - 마지막 갱신: 2026-09-05 +09:00
 - GitHub PR: [#7](https://github.com/kiy3035/retry-storm-control-lab/pull/7) MERGED, 2026-09-05 09:07:07 +09:00, merge commit `a745115`
@@ -32,6 +32,7 @@
 
 ## 완료한 작업
 
+- 게시용 블로그: `개인 프로젝트` 단일 카테고리 front matter, 구현 흐름·코드·실험 설계·실측 해석·한계·재현 절차를 포함한 원고 완성
 - 병합 후 마감: 로컬 `main`을 `a745115`로 fast-forward하고 병합본의 Java·Testcontainers·Python·보고서 대조 재검증
 - 6단계: 서버 원본 시각 기반 완료시간과 1초·100ms 재시도 bucket
 - 6단계: 동일 입력의 Fixed·Exponential·Jitter 정책별 3회 순환 실행
@@ -104,6 +105,7 @@
 | 병합된 `main` `a745115`에서 `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 26/26 성공, 55초 | 4개 suite, 실패·오류·skip 0 |
 | 병합된 `main`에서 `python -m unittest discover -s scripts -p test_analysis.py -v` | SUCCESS, 9/9 성공, 0.002초 | 분석 경계 최종 회귀 |
 | 병합된 `main`에서 `python scripts/verify-report.py results/stage6-20260904T150000Z` | SUCCESS | 원본→집계→bucket→CSV→보고서·블로그 최종 일치 |
+| 게시용 블로그 수정 후 `python scripts/verify-report.py results/stage6-20260904T150000Z` | SUCCESS | 원본·집계·CSV와 블로그 실측 표 일치 유지 |
 
 테스트 개수와 성공·실패 개수를 실제 출력 기준으로 기록한다.
 
@@ -259,8 +261,8 @@ STALE_VERSION_HTTP=409
 
 ## 다음 대화에서 시작할 작업
 
-1. 계획된 1~6단계와 병합 후 최종 검증이 완료됨. 추가 개발은 새 요구사항과 범위를 합의한 뒤 별도 단계로 시작
-2. 블로그 게시 전 사용자가 `docs/blog-draft.md`의 표현과 공개 범위를 최종 검토
+1. 계획된 1~6단계와 게시용 블로그 원고가 완료됨. 추가 개발은 새 요구사항과 범위를 합의한 뒤 별도 단계로 시작
+2. 사용자가 `docs/blog-draft.md`를 최종 검토하고 블로그 플랫폼의 `개인 프로젝트` 카테고리에 게시
 3. 재실험은 새 run-id에 저장하고 기존 결과를 덮어쓰지 않음
 
 ## 실행 및 재현 명령
