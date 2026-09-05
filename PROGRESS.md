@@ -6,9 +6,10 @@
 
 ## 현재 단계
 
-- 현재 단계: 4단계 완료, 사용자 검토 대기
+- 현재 단계: 6단계 완료, 사용자 PR 검토 대기
 - 상태: COMPLETED
-- 마지막 갱신: 2026-09-04 +09:00
+- 마지막 갱신: 2026-09-05 +09:00
+- GitHub PR: [#7](https://github.com/kiy3035/retry-storm-control-lab/pull/7) OPEN, base `main`, head `feat/stage-6-comparison`, 53개 파일, merge state `CLEAN` 확인
 
 ## 단계 현황
 
@@ -18,8 +19,8 @@
 | 2 | 메시지 발행·소비와 Fixed 재시도 | COMPLETED |
 | 3 | Exponential Backoff + Jitter | COMPLETED |
 | 4 | JPA DLQ·재처리 API·낙관적 락 | COMPLETED |
-| 5 | Micrometer·Prometheus·k6 | NOT_STARTED |
-| 6 | 실제 비교 실험·보고서·블로그 | NOT_STARTED |
+| 5 | Micrometer·Prometheus·k6 | COMPLETED |
+| 6 | 실제 비교 실험·보고서·블로그 | COMPLETED |
 
 상태값은 다음만 사용한다.
 
@@ -31,6 +32,17 @@
 
 ## 완료한 작업
 
+- 6단계: 서버 원본 시각 기반 완료시간과 1초·100ms 재시도 bucket
+- 6단계: 동일 입력의 Fixed·Exponential·Jitter 정책별 3회 순환 실행
+- 6단계: 864건, 시도 2,592회, 재시도 1,728회의 원본 JSON/CSV
+- 6단계: DLQ 저장 216건과 합성 회복 replay 216건 검증
+- 6단계: fail-closed 분석기·경계 테스트 9건·원본부터 문서 표까지 대조
+- 6단계: 구조·위협 모델·실험 보고서·한국어 블로그
+- 5단계: Micrometer Prometheus registry와 처리·재시도·완료 시간·DLQ 지표, 고정 enum 태그
+- 5단계: DB 커밋 뒤 INSERTED/DUPLICATE 집계, CONSUME/REPLAY 분리
+- 5단계: 선택형 monitoring Compose, RabbitMQ Prometheus plugin과 큐별 depth 수집
+- 5단계: 로컬 URL·건수·VU·시간 제한 k6, 종료 상태와 시도 횟수 확인, JSON/CSV 요약
+- 5단계: 독립 Compose/JAR/k6/Prometheus 검증 스크립트와 지표 해석 문서
 - 4단계: Flyway V3와 JPA DLQ, message_id 기반 동시 중복 저장 방지
 - 4단계: 목록·상세·버전 조건부 재처리 API, payload 비노출
 - 4단계: 선점/완료 트랜잭션 분리, 실제 JPA 낙관적 락과 HTTP 409 처리
@@ -75,6 +87,19 @@
 | 수신 타입 수정 후 동일 전체 명령 | SUCCESS, 17/17 성공, 58초 | 격리 큐 이동 포함 통과 |
 | 4단계 최종 `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 19/19 성공, 49초 | Testcontainers 통합 14건 + Jitter 단위 5건, 실패·오류·skip 0 |
 | `scripts/verify-stage4.ps1` | SUCCESS, 내부 bootJar 13초 | 실제 JAR 재시작 전후 DLQ PENDING, 재처리 SUCCEEDED, stale version HTTP 409 |
+| 5단계 계측 추가 후 `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 기존 19/19 성공, 1분 36초 | 기존 기능 회귀 검증 |
+| 5단계 지표 테스트 추가 후 같은 명령 | FAILED, 24건 중 1건 실패, 2분 37초 | 테스트 환경 Prometheus endpoint 404 |
+| 테스트 관측성 활성화 후 같은 명령 | FAILED, 24건 중 1건 실패, 1분 28초 | 테스트용 HTTP 클라이언트 지표에서 URL UUID 감지 |
+| 최종 `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 24/24 성공, 1분 50초 | 통합 17건·Jitter 5건·지표 단위 2건, 실패·오류·skip 0, 전체 scrape UUID 비노출 확인 |
+| `powershell -NoProfile -File scripts/verify-stage5.ps1` 최종 실행 | SUCCESS, bootJar 20초 | health UP, 수집 대상 2개 UP, k6 12건·check 36/36 통과, 시도 27회·재시도 15회·DLQ 3건·재처리 1건 |
+| 네트워크 없는 k6에서 BASE_URL=http://example.com | EXPECTED REJECTION, 종료 코드 107 | HTTP 실행 전 외부 URL 거부 |
+| 네트워크 없는 k6에서 ITERATIONS=0 | EXPECTED REJECTION, 종료 코드 107 | 잘못된 부하 예산 거부 |
+| 서버 시각 추가 후 `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 26/26 성공, 1분 9초 | 기존 24건 + tracker 시각 2건 |
+| `python -m unittest discover -s scripts -p test_analysis.py -v` | SUCCESS, 9/9 성공, 0.001초 | 분위수·bucket·누락·중복·시각·예산·DLQ 상태 경계 |
+| `python scripts/run-experiment.py` | SUCCESS, 9/9 실행·정리 완료 | 3정책×3회, 측정 96건과 워밍업 16건 |
+| `python scripts/analyze-experiment.py results/stage6-20260904T150000Z` | SUCCESS | JSON/CSV, 1초·100ms bucket, 비교 표 |
+| `python scripts/verify-report.py results/stage6-20260904T150000Z` | SUCCESS | 원본→집계→bucket→CSV→보고서·블로그 일치 |
+| 6단계 문서·분석기 보강 후 `gradlew.bat --no-daemon test --rerun-tasks` | SUCCESS, 26/26 성공, 47초 | Java·Testcontainers 최종 회귀, 실패·오류·skip 0 |
 
 테스트 개수와 성공·실패 개수를 실제 출력 기준으로 기록한다.
 
@@ -122,8 +147,28 @@ STALE_VERSION_HTTP=409
 - Docker Engine: 24.0.7
 - Docker Compose: v2.23.3-desktop.2
 
+5단계 실제 기동 검증은 2026-09-04 21:19:26 +09:00에 같은 로컬 환경에서 수행했다. Prometheus v3.5.0과 k6 1.2.3을 추가했다. 최종 성공 프로젝트 `retry-storm-stage5-check-792ef02f`의 앱·컨테이너·볼륨·네트워크를 정리했다. 앞선 실패 프로젝트 4730d138, 832a82ad와 독립 플러그인 확인 컨테이너도 정리했다. 사용자 기존 Docker 리소스와 중첩 저장소는 변경하지 않았다.
+
+- 실제 결과 요약: `docs/stage5-smoke-result.json`
+- 원본 k6 요약과 검증 출력: `build/retry-storm-stage5-check-792ef02f/summary.json`, `summary.csv`, `verification.json` (Git 제외)
+- 실행 당시 HEAD는 4단계 `50d447c`이고 5단계 미커밋 변경을 포함했다. 결과 JSON에도 이를 명시했다.
+- 소비 종료 후 작업 큐 depth 0, polling timeout 0, HTTP 실패율 0을 확인했다. 실제 다건 전략 비교나 1초 폭주 bucket 측정 결과로 해석하지 않는다.
+
+6단계 실험 `stage6-20260904T150000Z`는 2026-09-05에 완료했다. source `40a5f01`, 실행 시 추적 변경 없음, manifest·cleanup COMPLETED다.
+
+- 총 864건: 성공 648, DLQ 216, 총 시도 2,592, 재시도 1,728
+- DLQ 저장 216/216, 합성 장애 해제 replay 216/216
+- 완료시간 중앙/p95의 실행별 3회 중앙값(ms): Fixed 2856.017/5049.251, 지수 4091.569/7435.096, Jitter 3957.594/7270.813
+- 1초 retry 최대 중앙값: Fixed 39, 지수 31, Jitter 28. 100ms 최대: 8, 8, 6
+- queue depth 표본 최대 82~96, process CPU 표본 최대 약 0.226~0.299, runtime SQL calls/s 약 5.289~7.221
+- 전용 앱·컨테이너·볼륨·네트워크 정리 완료. 기존 Docker 리소스와 중첩 저장소 미변경
+- 환경·hash는 `results/stage6-20260904T150000Z/manifest.json`에 기록
+
 ## 현재 정상 동작하는 기능
 
+- `/actuator/prometheus` 지표 노출과 로컬 Prometheus 앱·RabbitMQ 수집
+- CONSUME/REPLAY별 처리·재시도·종료 histogram, 커밋 기준 DLQ 저장과 재처리 충돌 집계
+- k6 로컬 합성 메시지 발행·최종 상태 검증과 JSON/CSV 요약
 - Gradle Wrapper를 이용한 빌드와 테스트
 - 환경 변수로 비밀값과 포트를 주입하는 로컬 PostgreSQL·RabbitMQ 실행
 - 애플리케이션 시작 시 migration 전용 계정으로 Flyway V1/V2/V3 적용, JPA 스키마 검증
@@ -140,15 +185,19 @@ STALE_VERSION_HTTP=409
 
 ## 미완료 작업
 
-- 5단계 전체
-- 6단계 전체
 - 일반 메시지 tracker는 메모리 기반이며 재처리 성공을 반영하지 않음. 재시작 후 최종 실패·재처리 상태는 DB DLQ API에서 확인
 - 재처리 선점 후 장애로 PROCESSING에 남는 행의 자동 복구와 parking 자동 소비는 미구현
 - DB와 RabbitMQ의 원자적 커밋, 외부 부수 효과 exactly-once, 브로커 동시 장애까지의 DLX 무손실 보장은 하지 않음
-- 실제 다건 부하에서 Fixed와 Jitter를 비교하는 수치 측정은 5·6단계 범위
+- 인증·TLS·outbox·publisher confirm·PROCESSING lease·parking 자동 복구는 프로젝트 범위 밖
 
 ## 발생한 오류와 확인된 원인
 
+- 첫 최종 보고서 검증은 외부 실행 승인이 사용량 제한으로 거부됐고, 샌드박스 내부 사용자 Python은 Access Denied였다. 사용자 재개 후 승인된 실행으로 원본 대조와 9/9 테스트를 완료했다. 추가 패키지는 설치하지 않았다.
+- 5단계 첫 Compose 기동: RabbitMQ가 exit 1로 종료했고 PostgreSQL·Prometheus는 healthy였다. 정리 전에 로그를 보존하지 못해 최초 종료 원인은 확정하지 못했다. 같은 plugin 파일의 독립 기동과 이후 전체 기동 2회는 성공했다. 재발 시 조사할 수 있도록 실패 로그를 Git 제외 결과 폴더에 보존하도록 보강했다.
+- 5단계 두 번째 smoke: k6 12건은 통과했으나 DLQ 건수 확인 실패. PowerShell 5의 `@(Invoke-RestMethod ...)`가 JSON 배열을 한 항목으로 감싼 것이 원인이었다. 직접 변수 대입으로 수정 후 DLQ 3건·재처리·Prometheus 검증까지 성공했다.
+- 5단계 첫 24건 테스트: Spring Boot 테스트 기본값이 metrics export를 끄므로 `/actuator/prometheus`가 404였다. 테스트에 `@AutoConfigureObservability`를 추가해 실제 endpoint를 활성화했다.
+- 다음 24건 테스트: 테스트용 HTTP 클라이언트의 문자열 조립 URL이 UUID를 client metric 태그에 남겼다. ID가 있는 모든 테스트 요청을 `{id}` URI 템플릿으로 변경했다. 사용자 정의 앱 지표에 UUID를 추가하거나 비노출 검사를 제거하지 않았으며 전체 scrape의 UUID 패턴 거부를 추가했다.
+- Windows PowerShell 5에서 새 스크립트의 한글 오류 메시지가 깨졌다. UTF-8 BOM을 추가했고 다음 실행에서 한글 메시지가 정상으로 표시됐다.
 - 증상: 4단계 첫 17건 실행에서 parking 수신 테스트 1건 실패
   - 재현 명령: `gradlew.bat --no-daemon test --rerun-tasks`
   - 확인한 원인: 테스트의 범용 `receiveAndConvert`가 RetryMessage 타입 헤더를 기본 trusted packages 밖으로 판단해 거부함. 브로커 격리 큐 이동은 실행됨
@@ -199,21 +248,33 @@ STALE_VERSION_HTTP=409
 
 ## PENDING 항목
 
-- Fixed와 Jitter 실제 부하 결과
-- 1초 bucket 최대/p95 재시도 수
-- 평균/p95/p99 처리 완료시간
-- DLQ 발생률과 저장 성공률
-- DLQ 재처리 성공률
-- CPU, queue depth, DB QPS
+- 단계 요구사항 중 PENDING 없음
+- 운영 환경·통계적 유의성·실제 외부 장애 회복은 프로젝트 범위 밖이며 측정하지 않았다.
+- DB 지표는 runtime SQL calls/s이며 PostgreSQL 서버 전체 QPS로 표현하지 않는다.
 
 ## 다음 대화에서 시작할 작업
 
-1. 사용자가 4단계 PR을 검토하고 merge
-2. 사용자가 `계속 진행해`라고 요청한 경우에만 5단계 시작
-3. AGENTS.md, PROJECT_SPEC.md, CODEX_PROMPT.md, PROGRESS.md와 원격 merge 상태를 확인
-4. Micrometer·로컬 Prometheus·k6 관측성과 부하 도구 구성. 비교 실측·블로그는 6단계
+1. 사용자가 6단계 PR을 검토하고 merge
+2. 추가 계획 단계 없음. 사용자 요청 없이 운영화 범위를 시작하지 않음
+3. 재실험은 새 run-id에 저장하고 기존 결과를 덮어쓰지 않음
 
 ## 실행 및 재현 명령
+
+6단계 원본 생성·분석·대조:
+
+```powershell
+python scripts/run-experiment.py
+python scripts/analyze-experiment.py results/<출력된-run-id>
+python scripts/verify-report.py results/<출력된-run-id>
+```
+
+5단계 테스트는 아래 전체 테스트 명령을 사용하고, 독립 관측 환경은 다음으로 검증한다.
+
+```powershell
+powershell -NoProfile -File scripts/verify-stage5.ps1
+```
+
+수동 기동·PromQL·k6 옵션·정리 명령은 `docs/observability.md`에 기록했다.
 
 4단계 전체 테스트와 독립 실제 기동 검증 명령:
 
@@ -251,7 +312,16 @@ $env:LAB_RETRY_MAX_DELAY = '5s'
 $env:LAB_RETRY_JITTER_RATIO = '0.5'
 ```
 
-## 4단계 완료 사용자 보고용 요약
+## 5단계 완료 사용자 보고용 요약
+
+- 완료: Micrometer 계측, 로컬 Prometheus와 RabbitMQ 큐 지표, 제한된 k6 검증·JSON/CSV
+- 전체 테스트: 24/24 성공, 실패·오류·skip 0, 1분 50초
+- 실제 기동: Prometheus 대상 2개 UP, k6 12건 종료·check 36/36, 시도 27회·재시도 15회·DLQ 저장 3건·재처리 성공 1건
+- 입력 제한: 외부 URL·ITERATIONS=0 각각 종료 코드 107로 실행 전 거부
+- 상태: 5단계 COMPLETED, 4단계 브랜치 기반의 독립 PR 검토 대기, 6단계 미시작
+- 한계: 5초 scrape는 1초 bucket 아님, 기능 smoke를 전략 비교 결과로 해석하지 않음, 4단계 장애 복구 한계 유지
+
+## 4단계 완료 당시 사용자 보고용 요약
 
 - 완료: PostgreSQL JPA DLQ, 동시 중복 저장 방지, 버전 조건부 재처리, 저장 실패 격리
 - 최종 전체 테스트: 19/19 성공, 실패 0, 오류 0, skip 0, 49초
@@ -312,6 +382,17 @@ $env:LAB_RETRY_JITTER_RATIO = '0.5'
 
 ## 변경한 주요 파일
 
+- `experiments/*`, `compose.experiment.yaml`: 고정 계획과 1초 telemetry 설정
+- `scripts/run-experiment.py`, `analyze-experiment.py`, `verify-report.py`: 수집·분석·대조
+- `scripts/test_analysis.py`: 분석 경계 9건
+- `results/stage6-20260904T150000Z/*`: 9회 원본·환경·hash·CSV/JSON·bucket
+- `docs/architecture.md`, `threat-model.md`, `experiment-report.md`, `blog-draft.md`: 최종 문서
+- `src/main/java/dev/retrystorm/lab/metrics/LabMetrics.java`: 유한 태그 기반 처리·재시도·DLQ 계측
+- `src/test/java/dev/retrystorm/lab/metrics/LabMetricsTest.java`: 최초 시도 제외·태그·시계 오차 검증
+- `compose.monitoring.yaml`, `monitoring/*`: 로컬 Prometheus·RabbitMQ plugin과 scrape 설정
+- `load/messages.js`: 제한된 k6 실행과 최종 상태 검증
+- `scripts/verify-stage5.ps1`: 실제 JAR·k6·Prometheus 검증
+- `docs/observability.md`, `docs/stage5-smoke-result.json`: 사용법·한계·실제 기능 검증 결과
 - `src/main/java/dev/retrystorm/lab/dlq/*`: JPA 엔티티·저장·재처리·버전 충돌
 - `src/main/java/dev/retrystorm/lab/api/DeadLetterController.java`: DLQ 목록·상세·재처리 API
 - `src/main/resources/db/migration/V3__create_dead_letters.sql`: DLQ 스키마와 인덱스

@@ -1,5 +1,28 @@
 # 결정 기록
 
+## 2026-09-05: 반복 비교 실험과 원본 결과
+
+- Fixed 200ms, Exponential 200→400ms, Exponential+Jitter ±50%를 비교한다. Fixed와 지수 정책의 총 대기가 다르므로 차이를 Jitter 단독 효과로 쓰지 않는다.
+- 정책별 3회, 측정 96건·워밍업 16건, 소비자 8개·prefetch 1로 제한하고 반복마다 정책 순서를 순환한다. 기본 앱 동시성은 바꾸지 않는다.
+- 동일한 [2,2,2,3] 실패 패턴을 쓴다. 25% DLQ 비율은 의도한 입력이므로 개선 지표가 아니다.
+- 완료시간은 서버 publishedAt/completedAt, retry bucket은 최초를 제외한 attempt 원본 시각으로 계산한다.
+- nearest-rank 분위수와 짝수 표본 중앙 두 값 평균을 사용한다. 정책 표는 실행별 통계 3개의 중앙값이다.
+- pg_stat_statements는 전용 임시 DB에서 SQL 본문 없이 runtime 계정 call 수만 읽는다. 서버 전체 QPS로 표현하지 않는다.
+- 미완료 상태, 입력·시각·예산·DLQ 불일치는 fail-closed하고 원본부터 문서 표까지 별도 검증기로 대조한다.
+- Jitter seed는 고정하지 않는다. 코드·계획·입력·JAR hash를 보존하되 같은 시간 수치를 약속하지 않는다.
+- 3회 로컬 합성 표본으로 통계적 유의성이나 운영 성능을 주장하지 않는다.
+
+## 2026-09-04: 5단계 관측성과 로컬 부하 도구
+
+- Micrometer Prometheus registry만 추가하며 버전은 기존 Spring Boot 의존성 관리에 맡긴다. 유료 모니터링 adapter나 cloud 출력은 구성하지 않는다.
+- 처리/재시도는 CONSUME와 REPLAY를 분리하고 enum 기반 태그만 사용한다. DLQ INSERTED/DUPLICATE는 afterCommit에서 집계해 롤백을 성공으로 세지 않는다.
+- 처리 시간은 monotonic clock, 발행부터 종료까지 지연은 메시지의 Instant를 사용한다. 후자는 로컬 벽시계와 polling 오차를 구분해 문서화한다.
+- RabbitMQ 자체 Prometheus plugin을 monitoring Compose override에서만 활성화한다. 큐 2개인 로컬 실험이라 per-object endpoint를 사용하고 metrics 포트는 호스트에 공개하지 않는다.
+- Prometheus v3.5.0, k6 1.2.3을 재현용 태그로 고정한다. 최신 버전이라는 의미가 아니며 이 조합의 실제 로컬 실행을 검증한다. Prometheus 데이터는 24시간·256MB 한도로 보존한다.
+- k6는 전역 iteration 번호로 0~3 합성 실패 조건을 결정하고 최종 상태까지 기다리는 제한된 closed-loop 도구다. 최대 건수·VU·시간을 제한하고 로컬 URL만 허용하며 redirect와 사용량 보고를 끈다.
+- 5초 scrape의 rate를 1초 실측 재시도 bucket으로 해석하지 않는다. 실제 전략 비교·원시 이벤트 분석은 6단계에 남긴다.
+- 4단계 PR #5가 아직 OPEN이므로 5단계는 feat/stage-4-jpa-dlq를 base로 하는 별도 stacked PR로 제출한다. 사용자가 4단계를 merge한 뒤 5단계 base를 main으로 변경해야 한다.
+
 ## 2026-09-04: JPA DLQ와 재처리 경계
 
 - 최종 실패를 Flyway V3의 `retry_lab.dead_letters`에 저장하고 DB 커밋 성공 후 소비를 완료한다. JPA는 `ddl-auto=validate`로 스키마를 확인하며 DDL은 기존 migration 계정만 실행한다.

@@ -5,26 +5,38 @@ import java.util.List;
 import java.util.UUID;
 
 import dev.retrystorm.lab.message.RetryMessage;
+import dev.retrystorm.lab.metrics.LabMetrics;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class DeadLetterService {
 
     private final DeadLetterRepository repository;
+    private final LabMetrics metrics;
 
-    public DeadLetterService(DeadLetterRepository repository) {
+    public DeadLetterService(DeadLetterRepository repository, LabMetrics metrics) {
         this.repository = repository;
+        this.metrics = metrics;
     }
 
     @Transactional
     public void store(RetryMessage message, int attempts) {
-        repository.insertOnce(message.messageId(), message.payload(),
+        int inserted = repository.insertOnce(message.messageId(), message.payload(),
                 message.failuresBeforeSuccess(), message.publishedAt(), Instant.now(), attempts);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                metrics.stored(inserted == 1 ? LabMetrics.StoreOutcome.INSERTED
+                        : LabMetrics.StoreOutcome.DUPLICATE);
+            }
+        });
     }
 
     @Transactional(readOnly = true)

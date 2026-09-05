@@ -17,7 +17,7 @@ public class MessageProcessingTracker {
 
     public void ensureRegistered(RetryMessage message) {
         snapshots.putIfAbsent(message.messageId(), new ProcessingSnapshot(
-                message.messageId(), ProcessingState.PENDING, 0, List.of()));
+                message.messageId(), ProcessingState.PENDING, 0, List.of(), message.publishedAt(), null));
     }
 
     public ProcessingSnapshot register(RetryMessage message) {
@@ -25,7 +25,7 @@ public class MessageProcessingTracker {
                 message.messageId(),
                 ProcessingState.PENDING,
                 0,
-                List.of());
+                List.of(), message.publishedAt(), null);
         var existing = snapshots.putIfAbsent(message.messageId(), initial);
         if (existing != null) {
             throw new IllegalArgumentException("이미 등록된 messageId입니다.");
@@ -44,7 +44,7 @@ public class MessageProcessingTracker {
                     messageId,
                     ProcessingState.PROCESSING,
                     current.attemptCount() + 1,
-                    timestamps);
+                    timestamps, current.publishedAt(), null);
         });
         return updated.attemptCount();
     }
@@ -70,6 +70,6 @@ public class MessageProcessingTracker {
                 messageId,
                 state,
                 current.attemptCount(),
-                current.attemptTimestamps()));
+                current.attemptTimestamps(), current.publishedAt(), Instant.now()));
     }
 }

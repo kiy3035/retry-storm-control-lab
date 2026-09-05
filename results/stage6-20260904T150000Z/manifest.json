@@ -1,0 +1,85 @@
+{
+  "runId": "stage6-20260904T150000Z",
+  "status": "COMPLETED",
+  "plan": {
+    "repetitions": 3,
+    "messagesPerRun": 96,
+    "warmupMessages": 16,
+    "failurePattern": [
+      2,
+      2,
+      2,
+      3
+    ],
+    "publishWorkers": 16,
+    "consumers": 8,
+    "prefetch": 1,
+    "maxAttempts": 3,
+    "timeoutSeconds": 120,
+    "policies": [
+      {
+        "name": "FIXED_200",
+        "mode": "FIXED",
+        "fixedDelay": "200ms",
+        "initialDelay": "200ms",
+        "multiplier": 2.0,
+        "maxDelay": "5s",
+        "jitterRatio": 0.0
+      },
+      {
+        "name": "EXPONENTIAL",
+        "mode": "EXPONENTIAL_JITTER",
+        "fixedDelay": "200ms",
+        "initialDelay": "200ms",
+        "multiplier": 2.0,
+        "maxDelay": "5s",
+        "jitterRatio": 0.0
+      },
+      {
+        "name": "EXPONENTIAL_JITTER",
+        "mode": "EXPONENTIAL_JITTER",
+        "fixedDelay": "200ms",
+        "initialDelay": "200ms",
+        "multiplier": 2.0,
+        "maxDelay": "5s",
+        "jitterRatio": 0.5
+      }
+    ]
+  },
+  "planSha256": "635d46dd3a0f51d1307d56ed19c1a1e443e6dd07fd05bad68f6d408828221361",
+  "collectorSha256": "250d50ad9bcb7b7077de96f3a08b537d0a57dc524d2cdd67de6b491be9f10df7",
+  "sourceCommit": "40a5f0164d7b35a27dc30bd456b4fe9dfc514667",
+  "workingTreeChangesIncluded": false,
+  "os": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.10",
+  "docker": "24.0.7",
+  "compose": "2.23.3-desktop.2",
+  "trials": [
+    "1-FIXED_200",
+    "1-EXPONENTIAL",
+    "1-EXPONENTIAL_JITTER",
+    "2-EXPONENTIAL",
+    "2-EXPONENTIAL_JITTER",
+    "2-FIXED_200",
+    "3-EXPONENTIAL_JITTER",
+    "3-FIXED_200",
+    "3-EXPONENTIAL"
+  ],
+  "java": "Picked up JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=C:\\Tech-Blog\\retry-storm-control-lab\\.tmp\nopenjdk version \"21.0.8\" 2025-07-15 LTS\nOpenJDK Runtime Environment Temurin-21.0.8+9 (build 21.0.8+9-LTS)\nOpenJDK 64-Bit Server VM Temurin-21.0.8+9 (build 21.0.8+9-LTS, mixed mode, sharing)",
+  "dockerResources": {
+    "cpus": 8,
+    "memoryBytes": 3998879744
+  },
+  "hardware": {
+    "cpu": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "ramBytes": 8379490304
+  },
+  "jarSha256": "21982b00c84de5ab6516f459d1f120c7cd13fb9ae32e3e59517ef610958dce52",
+  "postgres": "16.9",
+  "images": {
+    "rabbitmq": "4.1.4-management-alpine",
+    "prometheus": "v3.5.0"
+  },
+  "inputSha256": "910d4545ec714f08d1856fd009e6ecb4515c0490e4870568e3481c01f59b5774",
+  "cleanup": "COMPLETED"
+}

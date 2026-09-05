@@ -1,6 +1,8 @@
 .gradle/
 .gradle-user-home/
 .tmp/
+__pycache__/
+*.pyc
 build/
 
 # 환경 변수와 로컬 전용 설정
